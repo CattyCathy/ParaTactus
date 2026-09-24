@@ -77,6 +77,7 @@ namespace ParaTactus.Tests
         }
 
         [Test]
+        [Explicit("spins: BeatGridProvider.Get from a bare host runs the model for hours on this track, see the README")]
         public void TestAnAnalysisIsStoredAndMatchesTheStreamedGrid()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");
