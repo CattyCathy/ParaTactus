@@ -67,6 +67,30 @@ Two things to know about it:
   `onnx.quantize`, with opset 17 and the same input and output names. The script uses ONNX Runtime's dynamic
   quantisation, so the recipe is written down and repeatable rather than inferred from a binary.
 
+## What the quantised build actually costs
+
+Measured rather than assumed, because the choice between the two files is a real one and the obvious claim — that a
+quantised model gives the same beats — is false. Both columns are the same decode of one track, Designant, 178.4s:
+
+| | `final0` fp32, 78.3 MB | dynamically quantised, 20.9 MB |
+| --- | --- | --- |
+| raw model beats | 431 | 420 |
+| beats after `BeatTrainRegulariser` | 556 | 550 |
+| of those, with no partner within 20ms | 56 | 50 |
+| residual to the beatmap's grid, median | 29 ms | 29 ms |
+| residual, p90 | 141 ms | 131 ms |
+| residual, max | 385 ms | 372 ms |
+| beats more than 60ms from the grid | 200 of 556 (36.0%) | 194 of 550 (35.3%) |
+| tempo level at 21 steady points | 2 not at a metrical level | 2 not at a metrical level |
+
+The two are **not interchangeable beat for beat**, and the quantised one is **not worse** on the metric that matters
+here, which is why the application prefers it for its size. Anything that depends on a particular beat landing at a
+particular millisecond should be re-measured rather than assumed to transfer.
+
+The residuals are `BeatmapTempoAgreementTest.TestModelBeatsAgainstBeatmapGrid` and the tempo levels are
+`TestModelBeatsMatchBeatmap`; each was run once per model with `OSUTEST_AUDIO` set and `OSUTEST_MODEL` pointed at that
+model. A single track is not a corpus: these numbers separate the two files, they do not rank them in general.
+
 ## Why the model is not in this repository
 
 It is 78 MB, and 21 MB quantised. A package that size does not belong in git history or in a NuGet package, so the

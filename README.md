@@ -38,8 +38,9 @@ to contain the model. `BeatThisBeatTracker` documents the exact frontend it repr
 hop 441, 128 Slaney-scale mel bands with un-normalised triangular filters, `log1p(1000 * mel)`).
 
 [`tools/export_onnx.py`](tools/export_onnx.py) turns the checkpoint into that file, and can write the dynamically
-quantised int8 build alongside it — 78.3 MB becomes 20.9 MB, at an accuracy this repository has not measured against
-the float build on music:
+quantised int8 build alongside it — 78.3 MB becomes 20.9 MB. Measured on one track, that build is not the same beats as
+the float one but no worse against the beatmap: median residual 29 ms for both, p90 131 ms against 141 ms.
+[`docs/model.md`](docs/model.md) has the numbers and what they do not say:
 
 ```powershell
 python tools/export_onnx.py --checkpoint final0 --out beat-this-final0.onnx --int8-out beat-this-final0-int8.onnx
