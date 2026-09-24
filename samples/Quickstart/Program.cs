@@ -40,17 +40,17 @@ if (!File.Exists(audioPath))
 // serve the cache and run the streaming tracker.
 string cacheDirectory = Path.Combine(Path.GetTempPath(), "paratactus-quickstart");
 
-// BASS has to be started before it can decode anything, and nothing in this library does that for the caller: an
-// application built on osu.Framework gets it from the framework, and a standalone consumer does not. The no-sound
-// device is enough to decode without touching audio hardware. (The adapter should be doing this itself; it is written
-// out here so the requirement is visible rather than discovered as Errors.Init.)
-if (!ManagedBass.Bass.Init(ManagedBass.Bass.NoSoundDevice, 44100, ManagedBass.DeviceInitFlags.Default, IntPtr.Zero)
-    && ManagedBass.Bass.LastError != ManagedBass.Errors.Already)
-{
-    Console.WriteLine($"BASS could not be started: {ManagedBass.Bass.LastError}");
-    return 1;
-}
+// BASS is started by the decoder itself on first use, with the no-sound device so that decoding does not need
+// audio hardware. Nothing has to be initialised here.
 
+if (Environment.GetEnvironmentVariable("PARATACTUS_DECODE_ONLY") == "1")
+{
+    Console.WriteLine("decoding only...");
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    float[] decoded = BassAudioDecoder.Default.DecodeMono(audioPath, AnalysisAudio.SampleRate);
+    Console.WriteLine("decoded " + decoded.Length + " samples in " + watch.ElapsedMilliseconds + "ms");
+    return 0;
+}
 var provider = new BeatGridProvider(modelPath, cacheDirectory, BassAudioDecoder.Default);
 
 Console.WriteLine($"analysing {Path.GetFileName(audioPath)}...");

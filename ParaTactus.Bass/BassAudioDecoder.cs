@@ -32,6 +32,42 @@ namespace ParaTactus.Decoding
     /// </remarks>
     public sealed class BassAudioDecoder : IAudioDecoder
     {
+
+        private static readonly object startLock = new object();
+        private static bool started;
+
+        /// <summary>
+        /// Starts BASS if nothing else has, once per process.
+        /// </summary>
+        /// <remarks>
+        /// Decoding needs BASS started, and a library that returns decoded samples should not require its caller to
+        /// know that. Nothing here did, and the gap was invisible until something stood on its own: the test suite has
+        /// its own environment helper and an application on osu.Framework gets it from the framework, so only a
+        /// standalone consumer saw <c>Errors.Init</c> - which reads like a missing codec rather than an unstarted
+        /// audio system.
+        ///
+        /// The no-sound device is deliberate: decoding does not need an output device, and asking for one would fail
+        /// on a machine without audio hardware or in a headless process.
+        /// </remarks>
+        private static void ensureStarted()
+        {
+            if (started)
+                return;
+
+            lock (startLock)
+            {
+                if (started)
+                    return;
+
+                if (!Bass.Init(Bass.NoSoundDevice, 44100, DeviceInitFlags.Default, IntPtr.Zero)
+                    && Bass.LastError != Errors.Already)
+                {
+                    throw new DecodeException("<init>", Bass.LastError);
+                }
+
+                started = true;
+            }
+        }
         /// <summary>
         /// The rate everything downstream works at, mirroring <see cref="AnalysisAudio.SampleRate"/> in the analysis so
         /// that call sites read as one decision rather than two.
@@ -67,6 +103,8 @@ namespace ParaTactus.Decoding
         /// </remarks>
         public static RawPcm DecodeRaw(string path, CancellationToken cancellation = default)
         {
+            ensureStarted();
+
             int handle = Bass.CreateStream(path, 0, 0, BassFlags.Decode | BassFlags.Float);
 
             try
@@ -89,6 +127,8 @@ namespace ParaTactus.Decoding
         /// </summary>
         public static RawPcm DecodeRaw(Stream stream, CancellationToken cancellation = default)
         {
+            ensureStarted();
+
             if (stream == null)
                 throw new ArgumentNullException(nameof(stream));
 
