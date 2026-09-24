@@ -41,7 +41,6 @@ namespace ParaTactus.Tests
         }
 
         [Test]
-        [Explicit("needs OSUTEST_AUDIO and the model file; does not analyse")]
         public void TestACachedGridIsServedWithoutAnalysing()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");
@@ -78,7 +77,6 @@ namespace ParaTactus.Tests
         }
 
         [Test]
-        [Explicit("needs OSUTEST_AUDIO and the model file; costs a full analysis")]
         public void TestAnAnalysisIsStoredAndMatchesTheStreamedGrid()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");

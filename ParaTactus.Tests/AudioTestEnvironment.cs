@@ -51,8 +51,21 @@ namespace ParaTactus.Tests
                 }
             }
 
-            if (!Bass.Init(Bass.NoSoundDevice, 44100, DeviceInitFlags.Default, IntPtr.Zero) && Bass.LastError != Errors.Already)
-                Assert.Ignore($"BASS could not be initialised: {Bass.LastError}");
+            try
+            {
+                if (!Bass.Init(Bass.NoSoundDevice, 44100, DeviceInitFlags.Default, IntPtr.Zero) && Bass.LastError != Errors.Already)
+                    Assert.Ignore($"BASS could not be initialised: {Bass.LastError}");
+            }
+            catch (DllNotFoundException e)
+            {
+                // The native library is not on this platform at all, which is a reason to skip rather than to fail:
+                // the analysis itself has no dependency on BASS, and every test that needs it is here for the decoder.
+                Assert.Ignore($"BASS is not loadable here: {e.Message}");
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                Assert.Ignore($"BASS is present but not the expected one: {e.Message}");
+            }
         }
     }
 }

@@ -52,7 +52,6 @@ namespace ParaTactus.Tests
         }
 
         [Test]
-        [Explicit("needs OSUTEST_AUDIO and the model file")]
         public void TestStreamedBeatsMatchWholeFileBeats()
         {
             string audio = Audio();
@@ -108,7 +107,6 @@ namespace ParaTactus.Tests
         }
 
         [Test]
-        [Explicit("needs OSUTEST_AUDIO and the model file")]
         public void TestBeatsAppearBeforeTheTrackHasFinished()
         {
             string audio = Audio();

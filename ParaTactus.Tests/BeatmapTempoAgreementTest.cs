@@ -71,7 +71,6 @@ namespace ParaTactus.Tests
         private const double stable_margin_ms = 3000;
 
         [Test]
-        [Explicit("needs OSUTEST_AUDIO and the model file")]
         public void TestModelBeatsMatchBeatmap()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");
@@ -345,7 +344,6 @@ namespace ParaTactus.Tests
         /// whatever multiplier the map used, so the comparison does not depend on knowing that.
         /// </remarks>
         [Test]
-        [Explicit("needs OSUTEST_AUDIO and the model file")]
         public void TestModelBeatsAgainstBeatmapGrid()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");

@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: restore
+        run: dotnet restore ParaTactus.slnx
+
+      - name: build
+        run: dotnet build ParaTactus.slnx -c Release --no-restore
+
+      # The suite is written so that material it cannot have is reported as skipped rather than as absent: a test
+      # needing a track, a model or BASS's native library skips itself, and a skipped count that changes is the
+      # signal that the environment changed. Only the diagnostics stay [Explicit] and out of the default run.
+      - name: test
+        run: dotnet test ParaTactus.slnx -c Release --no-build --logger "console;verbosity=normal"
+
+      # Packaging is where a missing README, licence or third-party notice would first show up, so it runs here too.
+      - name: pack
+        if: matrix.os == 'windows-latest'
+        run: |
+          dotnet pack ParaTactus/ParaTactus.csproj -c Release -o artifacts
+          dotnet pack ParaTactus.Bass/ParaTactus.Bass.csproj -c Release -o artifacts
