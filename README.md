@@ -29,9 +29,11 @@ dotnet add package ParaTactus.NET
 dotnet add package ParaTactus.Bass   # only if you want a path decoded for you
 ```
 
-**2. You need the model.** The model is not distributed here. `final0` from Beat This! is MIT licensed — copyright
-(c) 2024 Institute of Computational Perception, JKU Linz, Austria — and the licence, the citation and the SHA-256 of the
-two builds this project was measured with are in [`ParaTactus/MODEL-LICENCE.txt`](ParaTactus/MODEL-LICENCE.txt).
+**2. You need the model.** It is not distributed here. The two builds this project was measured with are published as
+release assets in [`beat-this-onnx`](https://github.com/CattyCathy/beat-this-onnx) — weights and licence only, no code —
+and the same checksums, the licence and the citation are in
+[`ParaTactus/MODEL-LICENCE.txt`](ParaTactus/MODEL-LICENCE.txt). `final0` from Beat This! is MIT licensed — copyright
+(c) 2024 Institute of Computational Perception, JKU Linz, Austria.
 
 The network takes a **log-mel spectrogram**, not audio: this library computes the mel itself, so the ONNX file only has
 to contain the model. `BeatThisBeatTracker` documents the exact frontend it reproduces (22050 Hz mono, `n_fft` 1024,

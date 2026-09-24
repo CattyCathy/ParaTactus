@@ -101,5 +101,7 @@ A single track is not a corpus: these numbers separate the two files, they do no
 ## Why the model is not in this repository
 
 It is 78 MB, and 21 MB quantised. A package that size does not belong in git history or in a NuGet package, so the
-library asks for a path instead and the README says where to get one. Publish the file yourself as a release asset or on
-a model hub if you want others to use it, with this licence text beside it.
+library asks for a path instead and the README says where to get one. The two builds measured here are published as
+release assets in [`beat-this-onnx`](https://github.com/CattyCathy/beat-this-onnx) — weights and licence, no code — with
+their checksums and this licence text beside them. Where the file comes from is nevertheless your choice: it is a path
+parameter, so `tools/export_onnx.py` against your own checkpoint is equally supported.
