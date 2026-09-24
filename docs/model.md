@@ -74,18 +74,23 @@ quantised model gives the same beats — is false. Both columns are the same dec
 
 | | `final0` fp32, 78.3 MB | dynamically quantised, 20.9 MB |
 | --- | --- | --- |
-| raw model beats | 431 | 420 |
-| beats after `BeatTrainRegulariser` | 556 | 550 |
-| of those, with no partner within 20ms | 56 | 50 |
+| raw model beats | 390 | 406 |
+| beats after `BeatTrainRegulariser` | 551 | 557 |
+| of those, with no partner within 20ms | 61 | 67 |
 | residual to the beatmap's grid, median | 29 ms | 29 ms |
-| residual, p90 | 141 ms | 131 ms |
-| residual, max | 385 ms | 372 ms |
-| beats more than 60ms from the grid | 200 of 556 (36.0%) | 194 of 550 (35.3%) |
-| tempo level at 21 steady points | 2 not at a metrical level | 2 not at a metrical level |
+| residual, p90 | 137.7 ms | 141 ms |
+| residual, max | 397 ms | 372 ms |
+| beats more than 60ms from the grid | 192 of 551 (34.8%) | 202 of 557 (36.3%) |
+| tempo level at 21 steady points | 3 not at a metrical level | 4 not at a metrical level |
 
-The two are **not interchangeable beat for beat**, and the quantised one is **not worse** on the metric that matters
-here, which is why the application prefers it for its size. Anything that depends on a particular beat landing at a
-particular millisecond should be re-measured rather than assumed to transfer.
+The two are **not interchangeable beat for beat**: they disagree about how many beats the track has, and about where a
+good fraction of them fall. They are also **too close to rank from one track**. The median residual is identical, the
+float build is a shade ahead on the tail here, and the quantised one was a shade ahead on the same measurement before
+the resampler gained its anti-aliasing filter and the peak merge stopped truncating - the ordering moves with the
+pipeline, not with the model, so a preference between these two files is a size decision rather than a quality one.
+
+The numbers above were measured after those two fixes, both of which move beats; the figures this table carried before
+them are still in the history of this file if a comparison across versions is wanted.
 
 The residuals are `BeatmapTempoAgreementTest.TestModelBeatsAgainstBeatmapGrid` and the tempo levels are
 `TestModelBeatsMatchBeatmap`; each was run once per model with `OSUTEST_AUDIO` set and `OSUTEST_MODEL` pointed at that

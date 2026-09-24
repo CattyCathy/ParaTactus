@@ -32,7 +32,8 @@ tempo and pulses on every other beat is acceptable; a grid that drifts off the b
   `final0` checkpoint from [CPJKU/beat_this](https://github.com/CPJKU/beat_this) and export it with
   [`tools/export_onnx.py`](../tools/export_onnx.py), which writes the int8 build as well. `../docs/model.md` carries the
   file contract, and what the quantised build costs against the float one: on the single track measured it is not the
-  same beats — 550 regularised beats against 556 — and not worse against the beatmap's grid. The SHA-256 of both builds is
+  same beats — 557 regularised beats against 551 — and the two are close enough that which one leads moves with the
+  pipeline rather than with the model. The SHA-256 of both builds is
   in `MODEL-LICENCE.txt`. The checkpoint is MIT licensed, copyright (c) 2024 Institute of Computational Perception, JKU
   Linz, Austria — that notice also applies to any quantised copy. The frontend the export has to match is documented in
   `BeatThisBeatTracker`: 22050 Hz mono, `n_fft` 1024, hop 441, 128 mel bands on the Slaney frequency scale with

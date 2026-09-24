@@ -41,7 +41,8 @@ hop 441, 128 Slaney-scale mel bands with un-normalised triangular filters, `log1
 
 [`tools/export_onnx.py`](tools/export_onnx.py) turns the checkpoint into that file, and can write the dynamically
 quantised int8 build alongside it — 78.3 MB becomes 20.9 MB. Measured on one track, that build is not the same beats as
-the float one but no worse against the beatmap: median residual 29 ms for both, p90 131 ms against 141 ms.
+the float one — 557 regularised beats against 551 — and the two are too close to rank from one track: the median residual
+to the beatmap's grid is 29 ms for both, with the float build a shade ahead on the tail (p90 137.7 ms against 141 ms).
 [`docs/model.md`](docs/model.md) has the numbers and what they do not say, and
 [`samples/ModelCompare`](samples/ModelCompare) re-runs the comparison on a track of your own:
 
