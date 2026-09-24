@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup Label="Project">
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    NUnit is referenced explicitly rather than relied on transitively. In the application repository it arrived through
+    osu.Framework's own dependency on it, which is not a reason for it to be here.
+  -->
+  <ItemGroup Label="Package References">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="NUnit" Version="4.6.1" />
+    <PackageReference Include="NUnit3TestAdapter" Version="6.2.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Project References">
+    <ProjectReference Include="..\ParaTactus\ParaTactus.csproj" />
+    <ProjectReference Include="..\ParaTactus.Bass\ParaTactus.Bass.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The beatmap's own timing points, the reference the tempo agreement test measures against. -->
+    <None Include="DesignantTimingPoints.csv" CopyToOutputDirectory="PreserveNewest" />
+    <!-- torchaudio's log-mel output for a fixed signal, the reference the frontend test measures against. -->
+    <None Include="LogMelFixture.bin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

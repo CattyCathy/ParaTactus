@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <!--
+    The decode half of the library, kept apart from the analysis because of what it depends on. BASS is proprietary, so
+    anything that references this package is no longer free of proprietary terms, and a caller who brings their own
+    decoder - or their own samples - should not have to care. Reference this if you want a path decoded for you;
+    reference only ParaTactus.NET if you do not.
+  -->
+  <PropertyGroup Label="Package">
+    <PackageId>ParaTactus.Bass</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>CattyCathy</Authors>
+    <Description>BASS audio decoding for ParaTactus.NET, so a track can be analysed from its path. Carries the proprietary BASS dependency: see THIRD-PARTY-NOTICES.md before using this commercially.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/CattyCathy/ParaTactus</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>beat-tracking;tempo;audio;bass;decoding</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup Label="Package References">
+    <PackageReference Include="ppy.osu.Framework" Version="2026.921.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ParaTactus\ParaTactus.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ParaTactus.Tests" />
+  </ItemGroup>
+</Project>

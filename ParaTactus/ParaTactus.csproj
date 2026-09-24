@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package">
+    <!-- Package identifier and assembly name differ on purpose: see tools/rename_to_tactus.py and tools/rename_to_paratactus.py. -->
+    <PackageId>ParaTactus.NET</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>CattyCathy</Authors>
+    <Description>Beat tracking for audio: a .NET port of Beat This! that returns a beat grid which follows real tempo changes, for driving animation from music.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/CattyCathy/ParaTactus</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>beat-tracking;tempo;bpm;onnx;audio;music</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="/" />
+    <!-- The library is useless without the network, so the network's own licence travels with it. -->
+    <None Include="MODEL-LICENCE.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!--
+    Deliberately references nothing from the application, and nothing proprietary. The only package here is the
+    inference engine; audio decoding used to be a dependency of this project and is now an optional one, in
+    ParaTactus.Bass, because the decoder it used is not open source.
+  -->
+  <ItemGroup Label="Package References">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The suite reaches into several stages of the frontend and of the postprocessing to measure them one at a time, and
+      those entry points are internal because they are not part of what this offers anyone else. Now that the code lives
+      here rather than in the application, the grant has to live here too.
+    -->
+    <InternalsVisibleTo Include="ParaTactus.Tests" />
+  </ItemGroup>
+</Project>

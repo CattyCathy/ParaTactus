@@ -1,0 +1,8 @@
+<!-- Properties every project here needs. Mirrors the application repository's, without the parts that
+     are about being the application. -->
+<Project>
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+</Project>

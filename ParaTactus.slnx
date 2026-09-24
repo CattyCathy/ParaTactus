@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ParaTactus.Bass/ParaTactus.Bass.csproj" />
+  <Project Path="ParaTactus.Tests/ParaTactus.Tests.csproj" />
+  <Project Path="ParaTactus/ParaTactus.csproj" />
+</Solution>

@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+
+# NuGet packages produced by `dotnet pack`, kept out of the tree; releases are published instead.
+artifacts/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
