@@ -21,7 +21,10 @@ double[] beats = BeatThisBeatTracker.BeatTimes(audioPath, modelPath, BassAudioDe
 ```
 
 `BassAudioDecoder.Default` is the decoder; `BassAudioDecoder.DecodeMono` and `DecodeRaw` are static if you want the
-samples rather than a grid.
+samples rather than a grid. The decoder starts BASS itself on first use, with the no-sound device, so nothing has to be
+initialised before it and decoding does not need audio hardware. The native BASS libraries have to be beside the
+assembly that uses them, which is why a framework-dependent build with no runtime identifier will not run: pin a RID, or
+deploy the natives yourself.
 
 ## Before you use this commercially
 

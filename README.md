@@ -40,7 +40,8 @@ hop 441, 128 Slaney-scale mel bands with un-normalised triangular filters, `log1
 [`tools/export_onnx.py`](tools/export_onnx.py) turns the checkpoint into that file, and can write the dynamically
 quantised int8 build alongside it — 78.3 MB becomes 20.9 MB. Measured on one track, that build is not the same beats as
 the float one but no worse against the beatmap: median residual 29 ms for both, p90 131 ms against 141 ms.
-[`docs/model.md`](docs/model.md) has the numbers and what they do not say:
+[`docs/model.md`](docs/model.md) has the numbers and what they do not say, and
+[`samples/ModelCompare`](samples/ModelCompare) re-runs the comparison on a track of your own:
 
 ```powershell
 python tools/export_onnx.py --checkpoint final0 --out beat-this-final0.onnx --int8-out beat-this-final0-int8.onnx
@@ -103,9 +104,9 @@ dense and individually weak. [`ParaTactus/README.md`](ParaTactus/README.md) has 
 
 ## Troubleshooting
 
-- **Beats look stale.** Delete the cache directory. The key is a hash of the audio, the model and this assembly's build
-  identity, so it should change exactly when it needs to — but a stale grid from an older build is the first thing to
-  rule out, and it costs one re-analysis per track.
+- **Beats look stale.** Delete the cache directory. The key is a hash of each file's path, size and last-write time plus
+  this assembly's build identity, so replacing a track or a model, or rebuilding the analysis, produces a miss — but a
+  stale grid is still the first thing to rule out, and deleting costs one re-analysis per track.
 - **`Analysing a track from its path needs a decoder`.** `BeatGridProvider` was constructed without one. Either add the
   package and pass `BassAudioDecoder.Default`, or decode the audio yourself and use the samples path.
 - **BASS is not free for commercial use.** It is free for non-commercial use and licensed per product otherwise, and the

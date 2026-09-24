@@ -29,12 +29,14 @@ tempo and pulses on every other beat is acceptable; a grid that drifts off the b
 
 - .NET 10
 - A Beat This! checkpoint exported to ONNX. **The model is not distributed with this library.** Obtain the official
-  `final0` checkpoint from [CPJKU/beat_this](https://github.com/CPJKU/beat_this) and export it yourself; the
-  int8-quantised ONNX build is what every measurement in this project was taken with, and the SHA-256 of both builds is
-  recorded in `MODEL-LICENCE.txt`. The checkpoint is MIT licensed, copyright (c) 2024 Institute of Computational
-  Perception, JKU Linz, Austria — that notice also applies to any quantised copy. The frontend the export has to match
-  is documented in `BeatThisBeatTracker`: 22050 Hz mono, `n_fft` 1024, hop 441, 128 mel bands on the Slaney frequency
-  scale with **un-normalised** triangular filters, `log1p(1000 * mel)`.
+  `final0` checkpoint from [CPJKU/beat_this](https://github.com/CPJKU/beat_this) and export it with
+  [`tools/export_onnx.py`](../tools/export_onnx.py), which writes the int8 build as well. `../docs/model.md` carries the
+  file contract, and what the quantised build costs against the float one: on the single track measured it is not the
+  same beats — 550 regularised beats against 556 — and not worse against the beatmap's grid. The SHA-256 of both builds is
+  in `MODEL-LICENCE.txt`. The checkpoint is MIT licensed, copyright (c) 2024 Institute of Computational Perception, JKU
+  Linz, Austria — that notice also applies to any quantised copy. The frontend the export has to match is documented in
+  `BeatThisBeatTracker`: 22050 Hz mono, `n_fft` 1024, hop 441, 128 mel bands on the Slaney frequency scale with
+  **un-normalised** triangular filters, `log1p(1000 * mel)`.
 - Audio, as mono `float[]` at `AnalysisAudio.SampleRate`. If you would rather have a path decoded for you, take
   `ParaTactus.Bass`; if you already have samples, or a decoder of your own, you need nothing but this package.
 
@@ -78,6 +80,10 @@ tracker.Add(chunkOfSamples);
 if (tracker.TryTake(...)) { /* beats are available */ }
 ```
 
+Both of those are exercised inside an application host. Called from a bare console program, `BeatGridProvider.Get` has
+been seen to block after decoding has finished, while the samples path above does not — so a console tool should take the
+samples path until that is settled. `samples/Quickstart` in the repository root demonstrates decoding for that reason.
+
 To decode with something other than BASS, implement `IAudioDecoder`; `MonoMixdown` does the channel mixdown and
 resampling that every decoder needs, so an implementation is usually a decode call and one line.
 
@@ -111,9 +117,11 @@ other.
 
 ## Caching
 
-Analysed grids are cached on disk. The cache key is a hash of the audio file, the model file **and the build identity of
-this assembly**, so it changes exactly when the code that produces beats changes. If beats ever look stale, delete the
-cache directory — it costs one re-analysis per track and rules out the entire class of problem.
+Analysed grids are cached on disk. The cache key is a hash of each file's full path, size and last-write time — not its
+contents — together with the build identity of this assembly. Replacing a track or a model, or rebuilding the analysis,
+therefore produces a miss rather than stale beats; a file edited in place and left the same size with the same timestamp
+would not, which is the one case it does not cover. If beats ever look stale, delete the cache directory — it costs one
+re-analysis per track and rules out the entire class of problem.
 
 ## Licence
 
