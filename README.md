@@ -29,7 +29,7 @@ dotnet add package ParaTactus.NET
 dotnet add package ParaTactus.Bass   # only if you want a path decoded for you
 ```
 
-**2. You need the model.** The network is not distributed here. `final0` from Beat This! is MIT licensed — copyright
+**2. You need the model.** The model is not distributed here. `final0` from Beat This! is MIT licensed — copyright
 (c) 2024 Institute of Computational Perception, JKU Linz, Austria — and the licence, the citation and the SHA-256 of the
 two builds this project was measured with are in [`ParaTactus/MODEL-LICENCE.txt`](ParaTactus/MODEL-LICENCE.txt).
 
@@ -37,8 +37,18 @@ The network takes a **log-mel spectrogram**, not audio: this library computes th
 to contain the model. `BeatThisBeatTracker` documents the exact frontend it reproduces (22050 Hz mono, `n_fft` 1024,
 hop 441, 128 Slaney-scale mel bands with un-normalised triangular filters, `log1p(1000 * mel)`).
 
-> **A gap worth knowing about:** this repository does not yet ship a script that produces the ONNX file from the
-> checkpoint, so getting a model currently means exporting it yourself. That is the next thing to add here.
+[`tools/export_onnx.py`](tools/export_onnx.py) turns the checkpoint into that file, and can write the dynamically
+quantised int8 build alongside it — 78.3 MB becomes 20.9 MB, at an accuracy this repository has not measured against
+the float build on music:
+
+```powershell
+python tools/export_onnx.py --checkpoint final0 --out beat-this-final0.onnx --int8-out beat-this-final0-int8.onnx
+```
+
+> **The script has not been run end to end here**, because the checkpoint is not in this repository and the machine it
+> was written on could not reach one. It is written against the reference's own export path and reviewed rather than
+> executed. [`docs/model.md`](docs/model.md) records the I/O contract it has to match, and `--verify` compares two
+> exported files against each other on the same input.
 
 **3. First call.** The provider analyses a track, caches the result on disk, and returns a grid:
 
@@ -52,6 +62,10 @@ BeatGrid grid = provider.Get(audioPath);          // about a quarter of the trac
 double bpm = grid.BpmAt(timeInMilliseconds);      // the tempo at a time, following real tempo changes
 IReadOnlyList<double> beats = grid.Beats;         // the beat instants, in milliseconds
 ```
+
+> **What has been verified where.** The samples path below runs in a plain process, and it is what the suite measures.
+> `BeatGridProvider.Get` and `StreamingBeatTracker` are exercised inside an application host; called from a bare
+> console host, `Get` has been seen to block after decoding has finished. See Troubleshooting.
 
 **4. Or bring your own samples.** Nothing but the model is needed if you decode elsewhere — no BASS, no framework:
 
@@ -99,6 +113,10 @@ dense and individually weak. [`ParaTactus/README.md`](ParaTactus/README.md) has 
   dependency: if you supply samples, you never touch BASS.
 - **A fresh clone of a consumer needs the packages in a local feed.** Until they are published, that is the trade for
   keeping the analysis decoupled from a private decoder.
+- **`Get` blocks in a bare console host.** Decoding finishes — a decode-only probe reports its sample count in a few
+  hundred milliseconds — and the analysis call after it does not return. The application this library was split from
+  calls the same path successfully in its own host, so the suspect is a stage that expects something to pump it. Until
+  that is settled, treat `samples/Quickstart` as a decoding demonstration and call the samples path from a console.
 
 ## Licence
 

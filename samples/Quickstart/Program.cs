@@ -9,7 +9,7 @@ using ParaTactus.Decoding;
 //
 // A UI does the same thing and then animates against the grid: the times in grid.Beats are where a pulse belongs, and
 // grid.BpmAt(time) is the tempo to report. The two are deliberately separate, because the reported tempo is smoothed
-// over a window and the beat instants are not 鈥?animating from the smoothed value is what makes visuals stutter.
+// over a window and the beat instants are not — animating from the smoothed value is what makes visuals stutter.
 
 if (args.Length < 2)
 {
