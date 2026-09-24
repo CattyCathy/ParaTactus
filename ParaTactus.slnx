@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Quickstart/Quickstart.csproj" />
+  </Folder>
   <Project Path="ParaTactus.Bass/ParaTactus.Bass.csproj" />
   <Project Path="ParaTactus.Tests/ParaTactus.Tests.csproj" />
   <Project Path="ParaTactus/ParaTactus.csproj" />
