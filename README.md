@@ -1,27 +1,110 @@
 # ParaTactus.NET
 
-Beat tracking for audio, in C#: the beat instants of a track, including where the tempo changes, as a grid a UI can
-animate against.
+Beat tracking for audio, in C#. It answers one question — *where are the beats in this track, including where the
+tempo changes* — and hands back a grid a UI can animate against.
 
-Two packages:
+It is a port of [Beat This!](https://github.com/CPJKU/beat_this) (Foscarin, Schlüter and Widmer, ISMIR 2024): the
+log-mel frontend, the chunked transformer inference and the peak-picking postprocessor are implemented here from the
+published reference rather than called through it.
 
 | Package | Project | What it is |
 | --- | --- | --- |
-| `ParaTactus.NET` | `ParaTactus/` | the analysis. Three MIT dependencies and nothing else. |
-| `ParaTactus.Bass` | `ParaTactus.Bass/` | optional. Decodes a path for you, with BASS, which is **proprietary** — free for non-commercial use only. |
+| `ParaTactus.NET` | [`ParaTactus/`](ParaTactus) | the analysis. Three MIT dependencies and nothing else. |
+| `ParaTactus.Bass` | [`ParaTactus.Bass/`](ParaTactus.Bass) | optional. Decodes a path for you, with BASS, which is **proprietary** — free for non-commercial use only. |
+| — | [`ParaTactus.Tests/`](ParaTactus.Tests) | the suite. It is the specification: it pins the frontend against torchaudio, holds the model against the published implementation, and measures the postprocessing against a beatmap's declared tempo. |
 
-`ParaTactus.Tests/` holds the suite. It is the specification rather than an afterthought: it pins the log-mel frontend
-against torchaudio's own output, holds the model against the published implementation, and measures every stage of the
-postprocessing against a beatmap's declared tempo.
+## Getting started
 
-Start with [`ParaTactus/README.md`](ParaTactus/README.md) — the requirements (a model file is needed, and is not distributed
-here), the usage, and the limits of the model that were measured rather than assumed.
+**1. The packages are not on nuget.org yet.** Build them from this repository:
+
+```powershell
+dotnet pack ParaTactus      -c Release -o artifacts
+dotnet pack ParaTactus.Bass -c Release -o artifacts
+```
+
+Point a local feed at `artifacts/`, or add the projects to your solution directly. Then:
+
+```powershell
+dotnet add package ParaTactus.NET
+dotnet add package ParaTactus.Bass   # only if you want a path decoded for you
+```
+
+**2. You need the model.** The network is not distributed here. `final0` from Beat This! is MIT licensed — copyright
+(c) 2024 Institute of Computational Perception, JKU Linz, Austria — and the licence, the citation and the SHA-256 of the
+two builds this project was measured with are in [`ParaTactus/MODEL-LICENCE.txt`](ParaTactus/MODEL-LICENCE.txt).
+
+The network takes a **log-mel spectrogram**, not audio: this library computes the mel itself, so the ONNX file only has
+to contain the model. `BeatThisBeatTracker` documents the exact frontend it reproduces (22050 Hz mono, `n_fft` 1024,
+hop 441, 128 Slaney-scale mel bands with un-normalised triangular filters, `log1p(1000 * mel)`).
+
+> **A gap worth knowing about:** this repository does not yet ship a script that produces the ONNX file from the
+> checkpoint, so getting a model currently means exporting it yourself. That is the next thing to add here.
+
+**3. First call.** The provider analyses a track, caches the result on disk, and returns a grid:
+
+```csharp
+using ParaTactus;
+using ParaTactus.Decoding;   // the BASS decoder, from the optional package
+
+var provider = new BeatGridProvider(modelPath, cacheDirectory, BassAudioDecoder.Default);
+
+BeatGrid grid = provider.Get(audioPath);          // about a quarter of the track's length, once
+double bpm = grid.BpmAt(timeInMilliseconds);      // the tempo at a time, following real tempo changes
+IReadOnlyList<double> beats = grid.Beats;         // the beat instants, in milliseconds
+```
+
+**4. Or bring your own samples.** Nothing but the model is needed if you decode elsewhere — no BASS, no framework:
+
+```csharp
+float[] samples = myDecoder(audioPath, AnalysisAudio.SampleRate);   // mono, 22050 Hz
+
+double[] beats   = BeatThisBeatTracker.BeatTimes(samples, modelPath);  // model output, unregularised
+double[] regular = BeatTrainRegulariser.Regularise(beats);             // put on a locally regular spacing
+BeatGrid grid    = BeatGrid.FromBeats(regular);
+```
+
+**5. Or feed it as it plays.** `StreamingBeatTracker` accepts chunks and stays ahead of the playhead, so a track can be
+analysed while it is being listened to rather than before.
+
+## What is where
+
+| Type | What it does |
+| --- | --- |
+| `BeatGridProvider` | analyses on a miss, serves the cache on a hit, and hands back a `BeatGrid` |
+| `BeatGrid` | `Beats`, `BpmAt(time)`, `Duration`, `PhaseAt(time)` — what a UI animates against |
+| `BeatThisBeatTracker` | the model: log-mel frontend, chunked inference, peak picking |
+| `BeatTrainRegulariser` | puts the tracked beats on a locally regular spacing |
+| `StreamingBeatTracker` | the same analysis, fed in chunks |
+| `BeatGridCache` | where analysed grids are kept; the key includes this assembly's build identity |
+| `OnsetEnvelope`, `Fft`, `MetricalLevel`, `BeatTimeMap` | the stages underneath, usable on their own |
+| `IAudioDecoder`, `MonoMixdown` | the seam a decoder plugs into, and the mixdown every decoder needs |
+
+## Limits of the model
+
+These are boundaries of the tool rather than defects, each measured rather than assumed: the tactus tops out around
+215 BPM; fast tempo ramps are low-passed; the phase of a beat is not recoverable from the audio in dense music and
+nothing here moves a beat the model did not propose; and short halved or doubled fragments survive in passages that are
+dense and individually weak. [`ParaTactus/README.md`](ParaTactus/README.md) has the measurements behind each.
+
+## Troubleshooting
+
+- **Beats look stale.** Delete the cache directory. The key is a hash of the audio, the model and this assembly's build
+  identity, so it should change exactly when it needs to — but a stale grid from an older build is the first thing to
+  rule out, and it costs one re-analysis per track.
+- **`Analysing a track from its path needs a decoder`.** `BeatGridProvider` was constructed without one. Either add the
+  package and pass `BassAudioDecoder.Default`, or decode the audio yourself and use the samples path.
+- **BASS is not free for commercial use.** It is free for non-commercial use and licensed per product otherwise, and the
+  NuGet package carrying its native binaries declares MIT in a field that cannot cover them. See
+  [`ParaTactus.Bass/THIRD-PARTY-NOTICES.md`](ParaTactus.Bass/THIRD-PARTY-NOTICES.md). The analysis package has no such
+  dependency: if you supply samples, you never touch BASS.
+- **A fresh clone of a consumer needs the packages in a local feed.** Until they are published, that is the trade for
+  keeping the analysis decoupled from a private decoder.
 
 ## Licence
 
 MIT, copyright (c) 2026 CattyCathy — see [`LICENSE`](LICENSE). `ParaTactus.Bass` is MIT as source but depends on the
-proprietary BASS library; its [`THIRD-PARTY-NOTICES.md`](ParaTactus.Bass/THIRD-PARTY-NOTICES.md) has those terms, and
-`ParaTactus/THIRD-PARTY-NOTICES.md` covers the rest.
+proprietary BASS library; `ParaTactus/THIRD-PARTY-NOTICES.md` covers everything the analysis itself needs, which is
+three MIT packages and nothing else.
 
 ## History
 
