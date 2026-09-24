@@ -198,7 +198,7 @@ namespace ParaTactus
 
             var peaks = BeatThisBeatTracker.Peaks(activation.ToArray());
 
-            foreach (int peak in peaks)
+            foreach (double peak in peaks)
             {
                 if (peak < emittedThrough || peak >= limit)
                     continue;

@@ -277,7 +277,7 @@ namespace ParaTactus
             => mel < 15 ? 200.0 * mel / 3.0 : 1000.0 * Math.Exp((mel - 15.0) * Math.Log(6.4) / 27.0);
 
         /// <summary>Runs the model over the whole spectrogram and returns the frames it reports as beats.</summary>
-        internal static (List<int> Beats, List<int> Downbeats) Predict(float[,] spectrogram, string modelPath)
+        internal static (List<double> Beats, List<double> Downbeats) Predict(float[,] spectrogram, string modelPath)
         {
             var (beat, downbeat) = Logits(spectrogram, modelPath);
 
@@ -437,7 +437,7 @@ namespace ParaTactus
         /// <summary>
         /// Runs the model over the whole spectrogram and returns the frames it reports as beats.
         /// </summary>
-        internal static List<int> Peaks(float[] logits)
+        internal static List<double> Peaks(float[] logits)
         {
             return Prune(RawPeaks(logits), logits);
         }
@@ -449,7 +449,7 @@ namespace ParaTactus
         /// Exposed so the pruning can be measured rather than assumed: whether a wrongly placed beat was put there by
         /// the model or by the pruning is not visible in the pruned output, and the two have different fixes.
         /// </remarks>
-        internal static List<int> RawPeaks(float[] logits)
+        internal static List<double> RawPeaks(float[] logits)
         {
             var peaks = new List<int>();
 
@@ -474,12 +474,16 @@ namespace ParaTactus
             }
 
             // Adjacent frames within one of each other describe one beat; the average of the group is its position.
-            var merged = new List<int>();
+            // The average is a real number rather than a frame, which is what the reference keeps it as
+            // (deduplicate_peaks in the published postprocessor). Rounding it to a frame here would move every merged
+            // plateau by up to one frame, which is 20ms at this frame rate and over 3% of a 600ms beat. The mean used
+            // to be accumulated in an int, so integer division truncated it at every step of the group.
+            var merged = new List<double>();
 
             if (peaks.Count == 0)
                 return merged;
 
-            int position = peaks[0];
+            double position = peaks[0];
             int count = 1;
 
             for (int i = 1; i < peaks.Count; i++)
@@ -497,10 +501,24 @@ namespace ParaTactus
                 }
             }
 
-            if (peaks.Count > 0)
-                merged.Add(position);
+            merged.Add(position);
 
             return merged;
+        }
+
+        /// <summary>
+        /// The frame a peak's fractional position is nearest to, clamped into the activation it indexes.
+        /// </summary>
+        /// <remarks>
+        /// A peak is the mean of a group of adjacent frames, so it is not a whole frame. Anything that wants the
+        /// activation a peak was found in wants the frame it sits on, and that is what this answers. Internal so the
+        /// diagnostics in the test suite read peaks exactly the way the tracker does rather than approximating it.
+        /// </remarks>
+        internal static int FrameOf(double position, int length)
+        {
+            int index = (int)Math.Round(position, MidpointRounding.AwayFromZero);
+
+            return index < 0 ? 0 : index >= length ? length - 1 : index;
         }
 
         /// <summary>
@@ -516,7 +534,7 @@ namespace ParaTactus
         /// the same in one gap, and a threshold loose enough to remove the second would delete real beats from the
         /// 400 BPM section, where the beat period itself is 150ms.
         /// </remarks>
-        private static List<int> Prune(List<int> frames, float[] logits)
+        private static List<double> Prune(List<double> frames, float[] logits)
         {
             if (frames.Count < 3)
                 return frames;
@@ -544,8 +562,13 @@ namespace ParaTactus
                     if ((frames[i + 1] - frames[i]) / period >= prune_ratio)
                         continue;
 
-                    // The weaker of the pair is the insertion, so it is the one that goes.
-                    keep[logits[frames[i]] >= logits[frames[i + 1]] ? i + 1 : i] = false;
+                    // The weaker of the pair is the insertion, so it is the one that goes. The position is a mean within
+                    // the group that produced it, so rounding it lands on one of that group's own frames and the
+                    // activation read is the activation at the beat.
+                    int left = FrameOf(frames[i], logits.Length);
+                    int right = FrameOf(frames[i + 1], logits.Length);
+
+                    keep[logits[left] >= logits[right] ? i + 1 : i] = false;
                     changed = true;
                 }
 
@@ -553,7 +576,7 @@ namespace ParaTactus
                     break;
             }
 
-            var result = new List<int>();
+            var result = new List<double>();
 
             for (int i = 0; i < frames.Count; i++)
             {
@@ -596,7 +619,7 @@ namespace ParaTactus
         /// model is actually marking even when a minority of its gaps are wrong, which is the same reason a mode is
         /// used for this in tempo estimation generally.
         /// </remarks>
-        private static double LocalPeriod(List<int> frames, bool[] keep, int index)
+        private static double LocalPeriod(List<double> frames, bool[] keep, int index)
         {
             var gaps = new List<double>();
 

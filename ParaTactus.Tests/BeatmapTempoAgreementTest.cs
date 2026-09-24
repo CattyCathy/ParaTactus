@@ -303,9 +303,9 @@ namespace ParaTactus.Tests
 
             for (int i = 1; i < inside.Length; i++)
             {
-                atBeats.Add(logits[inside[i]]);
+                atBeats.Add(logits[BeatThisBeatTracker.FrameOf(inside[i], logits.Length)]);
 
-                int middle = (inside[i - 1] + inside[i]) / 2;
+                int middle = (int)((inside[i - 1] + inside[i]) / 2);
                 atMidpoints.Add(logits[middle]);
 
                 double best = double.MinValue;
@@ -538,7 +538,7 @@ namespace ParaTactus.Tests
 
             TestContext.Out.WriteLine($"raw peaks {raw.Count}, after pruning {pruned.Count}, removed {raw.Count - pruned.Count}");
 
-            double[] timesOf(List<int> frames)
+            double[] timesOf(List<double> frames)
             {
                 var times = new double[frames.Count];
 
@@ -639,9 +639,9 @@ namespace ParaTactus.Tests
                 double residual = distanceToGrid(grid, time);
 
                 if (residual <= 60)
-                    onGrid.Add(logits[raw[i]]);
+                    onGrid.Add(logits[BeatThisBeatTracker.FrameOf(raw[i], logits.Length)]);
                 else
-                    offGrid.Add(logits[raw[i]]);
+                    offGrid.Add(logits[BeatThisBeatTracker.FrameOf(raw[i], logits.Length)]);
 
                 if (time < from || time > to)
                 {
@@ -651,7 +651,7 @@ namespace ParaTactus.Tests
 
                 string gap = double.IsNaN(previous) ? "    -" : $"{time - previous,5:0}";
 
-                TestContext.Out.WriteLine($"{time / 1000,8:0.00} {gap} {logits[raw[i]],8:0.000} {residual,7:0.#}");
+                TestContext.Out.WriteLine($"{time / 1000,8:0.00} {gap} {logits[BeatThisBeatTracker.FrameOf(raw[i], logits.Length)],8:0.000} {residual,7:0.#}");
                 previous = time;
             }
 

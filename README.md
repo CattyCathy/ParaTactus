@@ -104,6 +104,13 @@ These are boundaries of the tool rather than defects, each measured rather than 
 nothing here moves a beat the model did not propose; and short halved or doubled fragments survive in passages that are
 dense and individually weak. [`ParaTactus/README.md`](ParaTactus/README.md) has the measurements behind each.
 
+Two deliberate differences from the publication are stated here rather than only in the code. The peak picking runs an
+extra pruning pass (`BeatThisBeatTracker.Prune`) that the reference's minimal postprocessor does not have, dropping a
+beat that sits far closer to a neighbour than the local beat period; that is why the beats reported here are not the
+beats `beat_this` reports, and `RawPeaks` exists so the two can be told apart when something is wrong. The resampler is
+the other: it low-passes before it decimates, because the model's mel bands reach 11kHz and an unfiltered decimation
+folds content from above the target Nyquist back into them.
+
 ## Troubleshooting
 
 - **Beats look stale.** Delete the cache directory. The key is a hash of each file's path, size and last-write time plus
