@@ -21,7 +21,10 @@ namespace ParaTactus
     /// </remarks>
     public sealed class BeatGridCache
     {
-        private const string header = "osutest-beatgrid 1";
+        // The format marker, written into every file this cache produces. Renamed from the project's old working
+        // title, which is why a cache written before that misses once: a miss re-analyses, and that is the safe
+        // direction for a rename to fail in.
+        private const string header = "paratactus-beatgrid 1";
 
         /// <summary>
         /// Identifies the analysis that produced a grid, so that changing it invalidates what is already stored.

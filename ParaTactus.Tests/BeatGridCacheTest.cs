@@ -24,7 +24,7 @@ namespace ParaTactus.Tests
         [SetUp]
         public void SetUp()
         {
-            directory = Path.Combine(Path.GetTempPath(), "osutest-cache-" + Guid.NewGuid().ToString("n").Substring(0, 8));
+            directory = Path.Combine(Path.GetTempPath(), "paratactus-cache-" + Guid.NewGuid().ToString("n").Substring(0, 8));
             System.IO.Directory.CreateDirectory(directory);
 
             audio = Path.Combine(directory, "track.mp3");
@@ -117,7 +117,7 @@ namespace ParaTactus.Tests
             cache.Store(key, Grid(0, 500, 1000));
 
             // A crash part way through a write, and a file from a format that no longer exists.
-            foreach (string damage in new[] { "osutest-beatgrid 1", "osutest-beatgrid 1\n1", "something else\n1\n0,1,2", "osutest-beatgrid 1\nnot-a-number\n0" })
+            foreach (string damage in new[] { "paratactus-beatgrid 1", "paratactus-beatgrid 1\n1", "something else\n1\n0,1,2", "paratactus-beatgrid 1\nnot-a-number\n0" })
             {
                 File.WriteAllText(Path.Combine(directory, key + ".beats"), damage);
 

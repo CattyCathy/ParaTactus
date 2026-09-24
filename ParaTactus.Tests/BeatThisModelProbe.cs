@@ -44,7 +44,7 @@ namespace ParaTactus.Tests
 
             TestContext.Out.WriteLine(report.ToString());
 
-            string written = Path.Combine(Path.GetTempPath(), "osutest-model-probe.txt");
+            string written = Path.Combine(Path.GetTempPath(), "paratactus-model-probe.txt");
             File.WriteAllText(written, report.ToString());
             TestContext.Out.WriteLine($"written to {written}");
         }

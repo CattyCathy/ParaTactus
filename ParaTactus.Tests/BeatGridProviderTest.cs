@@ -24,7 +24,7 @@ namespace ParaTactus.Tests
         [SetUp]
         public void CreateCacheDirectory()
         {
-            directory = Path.Combine(Path.GetTempPath(), "osutest-provider-" + Guid.NewGuid().ToString("n").Substring(0, 8));
+            directory = Path.Combine(Path.GetTempPath(), "paratactus-provider-" + Guid.NewGuid().ToString("n").Substring(0, 8));
         }
 
         [TearDown]

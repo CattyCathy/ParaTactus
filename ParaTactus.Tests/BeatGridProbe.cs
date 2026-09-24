@@ -38,7 +38,7 @@ namespace ParaTactus.Tests
 
             Assert.That(File.Exists(model), Is.True, $"model not found at {model}");
 
-            string cache = Path.Combine(Path.GetTempPath(), "osutest-beatgrid-cache");
+            string cache = Path.Combine(Path.GetTempPath(), "paratactus-beatgrid-cache");
             var provider = new BeatGridProvider(model, cache, BassAudioDecoder.Default);
 
             bool cached = provider.IsCached(audio);

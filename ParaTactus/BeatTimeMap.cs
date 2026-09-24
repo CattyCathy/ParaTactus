@@ -13,7 +13,7 @@ namespace ParaTactus
     /// tracks whose tempo is not constant representable at all - the answer to "what is the BPM"
     /// is always "at time t, it is x".
     ///
-    /// All times are in milliseconds, matching <c>osu.Framework</c>'s track clock.
+    /// All times are in milliseconds, which is the convention of the player this grew out of.
     /// </remarks>
     public class BeatTimeMap
     {
