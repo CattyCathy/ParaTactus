@@ -125,8 +125,13 @@ namespace ParaTactus
         /// middle of a track is the same computation as those frames of the whole track. That is what lets a track be
         /// analysed in pieces without the pieces disagreeing with the whole, which a frontend that re-centred its
         /// window on each piece could not do.
+        ///
+        /// Takes any indexable sequence of samples, not an array, because the streaming tracker holds the whole track's
+        /// samples in a list and used to hand over a copy of every one of them per chunk - a full-history copy inside
+        /// the chunk loop, which is O(n) per chunk and O(n^2) across a track. Only the frames being computed are ever
+        /// read, so an indexable sequence is all this needs.
         /// </remarks>
-        internal static float[,] LogMelSpectrogram(float[] samples, int firstFrame, int frameCount)
+        internal static float[,] LogMelSpectrogram(IReadOnlyList<float> samples, int firstFrame, int frameCount)
         {
             var frame = new float[n_fft];
             var magnitudes = new float[Fft.BIN_COUNT];
@@ -206,16 +211,16 @@ namespace ParaTactus
         /// Reflection does not repeat the edge sample, so index -1 reads sample 1 and not sample 0. Reading the edge
         /// twice instead is the "symmetric" mode and would shift every frame slightly.
         /// </remarks>
-        private static float SampleAt(float[] samples, int index)
+        private static float SampleAt(IReadOnlyList<float> samples, int index)
         {
-            if (samples.Length == 0)
+            if (samples.Count == 0)
                 return 0;
 
-            if (samples.Length == 1)
+            if (samples.Count == 1)
                 return samples[0];
 
-            while (index < 0 || index >= samples.Length)
-                index = index < 0 ? -index : 2 * samples.Length - 2 - index;
+            while (index < 0 || index >= samples.Count)
+                index = index < 0 ? -index : 2 * samples.Count - 2 - index;
 
             return samples[index];
         }

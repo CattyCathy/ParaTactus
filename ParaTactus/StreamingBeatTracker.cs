@@ -71,20 +71,28 @@ namespace ParaTactus
         /// Adds more mono audio at 22050Hz. Beats for the newly analysable audio are found, which costs about a
         /// quarter of the duration added.
         /// </summary>
+        /// <remarks>
+        /// The model runs on the calling thread and blocks it for that cost. That is deliberate - which thread pays for
+        /// an analysis is the caller's decision, and the caller is the one that knows whether it has a thread to spare -
+        /// but it is the thing to know before wiring this to a UI: adding a second of audio stalls the calling thread
+        /// for about 250ms. <see cref="BeatGridProvider"/> is the wrapper that puts it on a background thread.
+        ///
+        /// The audio added is kept for the lifetime of the tracker, because a chunk is analysed with the samples before
+        /// it as well as its own. That is about 88KB per second of track.
+        /// </remarks>
         public void Add(ReadOnlySpan<float> chunk)
         {
             if (flushed)
                 throw new InvalidOperationException("The track has already been flushed; start a new tracker for a new track.");
 
-            foreach (float sample in chunk)
-                samples.Add(sample);
+            samples.AddRange(chunk);
 
             Drain(false);
         }
 
         /// <summary>
         /// Finishes the track, analysing every frame that is left including the reflected tail. Call this once the last
-        /// of the audio has been added.
+        /// of the audio has been added, from the same thread that has been adding it.
         /// </summary>
         public void Flush()
         {
@@ -219,7 +227,9 @@ namespace ParaTactus
         /// </remarks>
         private void Analyse(int firstFrame, int frameCount, int leftPad, int rightPad, int firstOwned, int endOwned)
         {
-            float[,] spectrogram = BeatThisBeatTracker.LogMelSpectrogram(samples.ToArray(), firstFrame, frameCount);
+            // The tracker's own list, not a copy of it: this is inside the per-chunk loop, and copying the whole
+            // history per chunk is what made a long track cost more than the sum of its chunks.
+            float[,] spectrogram = BeatThisBeatTracker.LogMelSpectrogram(samples, firstFrame, frameCount);
 
             int bins = spectrogram.GetLength(1);
             var input = new DenseTensor<float>(new[] { 1, leftPad + frameCount + rightPad, bins });

@@ -82,7 +82,10 @@ BeatGrid grid    = BeatGrid.FromBeats(regular);
 ```
 
 **5. Or feed it as it plays.** `StreamingBeatTracker` accepts chunks and stays ahead of the playhead, so a track can be
-analysed while it is being listened to rather than before.
+analysed while it is being listened to rather than before. `Add` and `Flush` run the model **on the calling thread** and
+block it for roughly a quarter of the audio added, which is deliberate: which thread pays for an analysis is the
+caller's decision. Feed it from a background thread — `BeatGridProvider` is the wrapper that does — because adding a
+second of audio from a UI thread stalls that thread for about 250ms.
 
 ## What is where
 
