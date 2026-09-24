@@ -89,7 +89,14 @@ particular millisecond should be re-measured rather than assumed to transfer.
 
 The residuals are `BeatmapTempoAgreementTest.TestModelBeatsAgainstBeatmapGrid` and the tempo levels are
 `TestModelBeatsMatchBeatmap`; each was run once per model with `OSUTEST_AUDIO` set and `OSUTEST_MODEL` pointed at that
-model. A single track is not a corpus: these numbers separate the two files, they do not rank them in general.
+model. The beat counts and the 20ms column come from [`samples/ModelCompare`](../samples/ModelCompare), which runs both
+files over one decode of one track and reports where they part:
+
+```bash
+dotnet run --project samples/ModelCompare -- track.mp3 beat-this-final0.onnx beat-this-final0-int8.onnx
+```
+
+A single track is not a corpus: these numbers separate the two files, they do not rank them in general.
 
 ## Why the model is not in this repository
 
