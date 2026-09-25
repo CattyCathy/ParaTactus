@@ -97,6 +97,12 @@ The stages are separable on purpose and are each useful alone: `OnsetEnvelope` (
 These are boundaries of the tool rather than defects, and each was measured rather than assumed. They are recorded here
 so they are not re-investigated as bugs.
 
+- **A steady passage can still come out uneven.** The regulariser removes subdivisions and fills missed beats, but it
+  does not re-space the beats it keeps, so the tracker's own scatter survives it. On the reference track's steady 200 BPM
+  section (145-175s) the gaps scatter over 275-375ms around a 300ms beat and the grid sits a median 69ms from the
+  beatmap's own grid, with 18 of 28 beats more than 60ms out; over the whole track 60% of the beatmap's beats have a UI
+  pulse within 60ms and 8% have none within 149ms. A phase pass fitted to the tracker's own lattice was measured and made
+  the track worse, so what is left is the model's shape rather than a stage that is missing.
 - **The tactus tops out around 215 BPM.** The publication's own alternative postprocessor caps its DBN at `max_bpm=215`,
   and above that the model settles onto a slower pulse instead of failing visibly — it looks confident and is wrong.
   On a track whose beatmap ramps to 400 BPM the model holds a flat ~167 BPM through the top of the ramp.

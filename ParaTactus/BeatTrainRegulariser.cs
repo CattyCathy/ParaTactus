@@ -5,10 +5,23 @@ using ParaTactus;
 namespace ParaTactus
 {
     /// <summary>
-    /// Rebuilds a tracked beat sequence on a locally regular spacing, so the visuals pulse where the beat is rather
-    /// than where the tracker happened to report one.
+    /// Removes the beats the tracker reported on subdivisions and fills in the ones it missed, so the visuals pulse on
+    /// the metre rather than on every detection.
     /// </summary>
     /// <remarks>
+    /// What this does not do is re-space the beats it keeps: every one of them is placed exactly where the tracker
+    /// reported it. A passage the tracker tracks unevenly therefore comes out uneven, and a passage it reports slightly
+    /// late comes out slightly late. That is the measured shape of the reference track's steady 200 BPM section, where
+    /// the gaps scatter over 275-375ms around a 300ms beat: all of them fall inside the band this walks with
+    /// (<see cref="minimum_ratio"/> to <see cref="maximum_ratio"/>), so nothing there is corrected, and the grid sits a
+    /// median 69ms from the beatmap's own grid with 18 of its 28 beats more than 60ms out.
+    ///
+    /// A second pass that measured each steady run against its own lattice and translated the run onto it was written
+    /// and measured, and it made the track worse: overall median 29ms to 35.1ms, 200 to 223 beats more than 60ms out,
+    /// and several ten-second windows regressing by more than the target window improved. The reason is structural
+    /// rather than a matter of tuning - a lattice fitted to the tracker's own beats carries the same offset it would be
+    /// correcting - so it is recorded here rather than tried again.
+    ///
     /// The model reports a tempo that is right and individual beats that are not. On Designant's 200 BPM section the
     /// gaps it produces run from 200ms to 620ms around a 300ms beat - it fires on subdivisions in some places and
     /// misses beats in others - and a display driven straight from those pulses unevenly through music a listener hears

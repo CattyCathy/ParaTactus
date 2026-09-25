@@ -103,6 +103,41 @@ dotnet run --project samples/ModelCompare -- track.mp3 beat-this-final0.onnx bea
 
 A single track is not a corpus: these numbers separate the two files, they do not rank them in general.
 
+## What the grid does against a beatmap's own grid
+
+`BeatmapTempoAgreementTest.TestModelBeatsAgainstBeatmapGrid` regularises the tracked beats and measures each one against
+the nearest line of the beatmap's own grid. On the reference track (Designant, 178.4s), float build:
+
+| | |
+| --- | --- |
+| residual to the map's grid, all 555 beats | median 29ms, p90 136.2ms, max 372ms, 200 more than 60ms |
+| at the map's own metrical level (459 of 555) | median 29ms, p90 131ms, 145 (32%) more than 60ms |
+| signed offset at that level | p10 -74ms, median -9ms, p90 +112ms |
+| the map's own beats with a UI pulse within 60ms | 361 of 603 (60%); 47 (8%) have none within 149ms |
+
+Per ten seconds, because the failure is local and the buckets fail for different reasons:
+
+| from | n | median | p90 | max | >60ms |
+| --- | --- | --- | --- | --- | --- |
+| 10s | 34 | 9 | 29 | 29 | 0 |
+| 20s | 33 | 9 | 29 | 69 | 1 |
+| 30s (over a ramp) | 36 | 111 | 149 | 149 | 26 |
+| 40s (over a ramp) | 36 | 111 | 141 | 149 | 25 |
+| 60s | 35 | 69 | 131 | 136 | 19 |
+| 80s (over a ramp) | 34 | 128 | 245 | 285 | 20 |
+| 100s | 24 | 12.3 | 44 | 64 | 1 |
+| 110s | 26 | 102 | 151 | 163 | 26 |
+| 120s | 29 | 82 | 151 | 168 | 19 |
+| 140s | 28 | 69 | 154 | 254 | 18 |
+| 150s | 32 | 12 | 12 | 32 | 0 |
+| 160s | 34 | 12 | 32 | 68 | 1 |
+
+Two things to read out of that table. The buckets over a tempo ramp (30s, 40s, 80s) take their median from a five-second
+window that straddles several timing points, which the test itself warns measures the window rather than the tracker.
+And the 145-175s passage is the one to know about: the beatmap holds 200 BPM there and the music is steady, so nothing
+excuses its 69ms median, and the tracker's own gaps in it scatter over 275-375ms. Nothing in this library re-spaces a
+beat the tracker reported, and a phase pass fitted to the tracker's own lattice was measured and made the track worse,
+so that passage is the model's limit rather than a missing stage.
 ## Why the model is not in this repository
 
 It is 78 MB, and 21 MB quantised. A package that size does not belong in git history or in a NuGet package, so the
