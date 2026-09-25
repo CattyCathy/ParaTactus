@@ -81,9 +81,10 @@ tracker.Add(chunkOfSamples);
 if (tracker.TryTake(...)) { /* beats are available */ }
 ```
 
-Both of those are exercised inside an application host. Called from a bare console program, `BeatGridProvider.Get` has
-been seen to block after decoding has finished, while the samples path above does not — so a console tool should take the
-samples path until that is settled. `samples/Quickstart` in the repository root demonstrates decoding for that reason.
+Both of those are exercised inside an application host and by the test suite, which is a plain host of its own. The defect
+that once made `BeatGridProvider.Get` block from a bare console program is fixed: it was below-normal priority on the
+analysis thread, which stops ONNX Runtime's pool from completing, and `README.md` at the root of the repository records
+the measurement that identified it.
 
 To decode with something other than BASS, implement `IAudioDecoder`; `MonoMixdown` does the channel mixdown and
 resampling that every decoder needs, so an implementation is usually a decode call and one line.
