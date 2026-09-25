@@ -69,8 +69,8 @@ IReadOnlyList<double> beats = grid.Beats;         // the beat instants, in milli
 ```
 
 > **What has been verified where.** The samples path below runs in a plain process, and it is what the suite measures.
-> `BeatGridProvider.Get` and `StreamingBeatTracker` are exercised inside an application host; called from a bare
-> console host, `Get` has been seen to block after decoding has finished. See Troubleshooting.
+> `BeatGridProvider.Get` works from a bare console host too, now that the defect described under Troubleshooting is
+> fixed, and the test that covers it runs in a plain test host rather than behind an application.
 
 **4. Or bring your own samples.** Nothing but the model is needed if you decode elsewhere — no BASS, no framework:
 
@@ -128,10 +128,12 @@ folds content from above the target Nyquist back into them.
   dependency: if you supply samples, you never touch BASS.
 - **A fresh clone of a consumer needs the packages in a local feed.** Until they are published, that is the trade for
   keeping the analysis decoupled from a private decoder.
-- **`Get` blocks in a bare console host.** Decoding finishes — a decode-only probe reports its sample count in a few
-  hundred milliseconds — and the analysis call after it does not return. The application this library was split from
-  calls the same path successfully in its own host, so the suspect is a stage that expects something to pump it. Until
-  that is settled, treat `samples/Quickstart` as a decoding demonstration and call the samples path from a console.
+- **`Get` used to block in a bare console host.** It set below-normal priority on its own analysis thread, and ONNX
+  Runtime's thread pool, created from a thread like that, never finished the inference: measured on the reference track,
+  the same sequence decoded, analysed and flushed in 22 seconds at normal priority and spun at full CPU for minutes
+  below it. The fix is to leave that thread at normal priority - what protects playback is the two processors held back
+  from the model's own thread pool, which is what the code comment claimed was doing the work all along. Lower that
+  priority again and this is the symptom to expect.
 
 ## Licence
 
