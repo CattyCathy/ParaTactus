@@ -3,6 +3,9 @@
 <Project>
   <PropertyGroup>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The cache keys off this assembly's module version id, and that is only content-stable because builds are
+         deterministic. Relying on the SDK default for that would make a cache-stability claim depend on a default. -->
+    <Deterministic>true</Deterministic>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 </Project>
