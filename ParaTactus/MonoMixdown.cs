@@ -17,17 +17,23 @@ namespace ParaTactus
         /// Where the anti-aliasing filter stops passing, as a fraction of the target rate.
         /// </summary>
         /// <remarks>
-        /// The model's mel filterbank reaches 11kHz on a 22.05kHz rate, so everything below the target Nyquist is
-        /// signal to it. 0.45 keeps the filter's transition band below Nyquist rather than inside the top mel band.
+        /// As close to the target Nyquist as a filter can practicably be, because the model's mel filterbank reaches
+        /// 11kHz on a 22.05kHz rate: almost the whole target band is signal to it, and the only content worth removing
+        /// is what folds onto that band from above. 0.45 was tried first and is measurably too low - on the reference
+        /// track it cut into the top of the model's band and moved the tracker onto half tempo through the 140-180s
+        /// section, where it had held the 200 BPM the beatmap declares before the filter existed. With nothing above
+        /// 11kHz to spare, the trade has to favour the band the model actually uses.
         /// </remarks>
-        private const double cutoff_fraction = 0.45;
+        private const double cutoff_fraction = 0.495;
 
         /// <summary>Length of the anti-aliasing filter, in taps at the source rate.</summary>
         /// <remarks>
-        /// 64 taps with the window below is about 54dB of stopband attenuation, which is far more than a decimator
-        /// needs to keep an alias out of a log-mel band, and cheap enough to run once per track.
+        /// Long enough that the transition band is narrow enough to fit between the top of the model's band and the
+        /// target Nyquist, which is a gap of a few hundred hertz. 64 taps spread the transition across the top mel
+        /// band; 256 narrows it to roughly a quarter of that, for four times the arithmetic - about a second of work
+        /// per track against the roughly 45 seconds the analysis takes.
         /// </remarks>
-        private const int filter_taps = 64;
+        private const int filter_taps = 256;
 
         /// <summary>Kaiser shape parameter: a wider main lobe and a lower stopband than the usual 5 or 6.</summary>
         private const double kaiser_beta = 8.0;
@@ -76,9 +82,9 @@ namespace ParaTactus
         /// the bands the model reads. A 44.1kHz source reaches here unfiltered - the BASS decoder deliberately decodes
         /// at the native rate - carrying content the model was never trained on.
         ///
-        /// So: a windowed-sinc low-pass at 0.45 of the target rate, evaluated at the fractional position of each output
-        /// sample by interpolating between two precomputed phases. Downsampling only; a source at or below the target
-        /// rate cannot alias, and is interpolated linearly, which is cheaper and adequate.
+        /// So: a windowed-sinc low-pass immediately below the target Nyquist, evaluated at the fractional position of
+        /// each output sample by interpolating between two precomputed phases. Downsampling only; a source at or below
+        /// the target rate cannot alias, and is interpolated linearly, which is cheaper and adequate.
         /// </remarks>
         private static float[] resample(float[] samples, int sourceRate, int targetRate)
         {
