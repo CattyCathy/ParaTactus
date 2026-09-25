@@ -77,7 +77,6 @@ namespace ParaTactus.Tests
         }
 
         [Test]
-        [Explicit("spins: BeatGridProvider.Get from a bare host runs the model for hours on this track, see the README")]
         public void TestAnAnalysisIsStoredAndMatchesTheStreamedGrid()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");
@@ -118,7 +117,10 @@ namespace ParaTactus.Tests
 
             TestContext.Out.WriteLine($"cached grid: {grid.Beats.Count} beats, streamed: {tracker.Beats.Count} beats");
 
-            BeatGrid streamed = BeatGrid.FromBeats(tracker.Beats);
+            // Regularised the way the provider regularises, so this compares like with like: the provider stores what
+            // the regulariser produced, and raw streamed beats are a different pipeline - which is what this test
+            // compared while it was [Explicit] and never ran to the end.
+            BeatGrid streamed = BeatGrid.FromBeats(BeatTrainRegulariser.Regularise(tracker.Beats));
 
             // The level is chosen from the track, so both should land on the same octave.
             Assert.That(streamed.MetricalShift, Is.EqualTo(grid.MetricalShift));

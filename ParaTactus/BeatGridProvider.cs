@@ -68,11 +68,14 @@ namespace ParaTactus
         /// length on a miss and returns immediately on a hit.
         /// </summary>
         /// <remarks>
-        /// The analysis runs on its own thread at below normal priority. Limiting the model's own thread count keeps a
-        /// couple of processors free, but the decode and the mel frontend are single-threaded work on this side and
-        /// would still be competing at equal priority with the audio callback for the rest. Below normal, the audio
-        /// thread pre-empts it whenever it needs to run, which costs analysis time that nothing is waiting on while the
-        /// track plays.
+        /// The analysis runs on its own thread, so the caller waits only on the result and not on any of the work, and
+        /// that thread runs at normal priority. It used to be lowered to below normal so that the audio callback would
+        /// always be ahead of it, and that does not work: with ONNX Runtime's thread pool created from a below-normal
+        /// thread the inference never finishes. Measured on the reference track, the same sequence on a below-normal
+        /// thread spun at full CPU for minutes where the identical code at normal priority returned in 19 seconds.
+        /// What actually protects playback is keeping processors out of the model's own pool, two of them, which
+        /// <see cref="BeatThisBeatTracker.OpenSession"/> does without starving the inference it is protecting playback
+        /// from.
         /// </remarks>
         public BeatGrid Get(string audioPath, CancellationToken cancellation = default)
         {
@@ -125,7 +128,6 @@ namespace ParaTactus
             })
             {
                 IsBackground = true,
-                Priority = ThreadPriority.BelowNormal,
                 Name = "beat analysis",
             };
 
