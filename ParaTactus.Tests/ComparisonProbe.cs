@@ -59,6 +59,13 @@ namespace ParaTactus.Tests
 
             int limit = int.TryParse(Environment.GetEnvironmentVariable("OSUTEST_LIMIT"), out int wanted) ? wanted : 12;
 
+            // The suppression shares to sweep, as a comma-separated list.
+            string shareList = Environment.GetEnvironmentVariable("OSUTEST_SHARES") ?? "0.4,0.5,0.6,0.75";
+            double[] shares = shareList.Split(',')
+                                       .Select(part => double.TryParse(part.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value : 0)
+                                       .Where(value => value > 0)
+                                       .ToArray();
+
             // The comparison is run twice - once with the four slowest maps and once with everything - because the
             // objective is specifically about tempo-changing and fast material, and a median over a corpus that is
             // mostly one tempo cannot answer a question about the rest of it.
@@ -104,6 +111,14 @@ namespace ParaTactus.Tests
 
                 double[] gridBeats = playerGrid == null ? Array.Empty<double>() : playerGrid.Beats.ToArray();
 
+                // The detector at each suppression share under test, from one pass over the audio. The shares are swept
+                // in the same run as the comparison because the first value in use was chosen against a comparison
+                // whose units were wrong, and a share tuned on a bad reference is worth nothing.
+                var atShares = new Dictionary<double, Result>();
+
+                foreach (double share in shares)
+                    atShares[share] = Measure(detector.Beats(samples, share), grid, seconds);
+
                 rows.Add(new Row(
                     fields[0],
                     double.TryParse(fields[6], NumberStyles.Float, CultureInfo.InvariantCulture, out double period) ? period : 0,
@@ -111,13 +126,13 @@ namespace ParaTactus.Tests
                     Measure(tracked, grid, seconds),
                     Measure(regularised, grid, seconds),
                     Measure(gridBeats, grid, seconds),
-                    Measure(detected, grid, seconds)));
+                    atShares));
             }
 
             if (rows.Count == 0)
                 Assert.Fail("nothing could be measured");
 
-            Report(rows);
+            Report(rows, shares);
 
             // The maps whose own beat is fastest, which is the material the objective names and the material a median
             // over the corpus hides.
@@ -126,20 +141,25 @@ namespace ParaTactus.Tests
             TestContext.Out.WriteLine("");
             TestContext.Out.WriteLine("the four fastest beatmaps, on their own:");
 
-            Report(fastest);
+            Report(fastest, shares);
         }
 
-        private static void Report(List<Row> rows)
+        private static void Report(List<Row> rows, double[] shares)
         {
             TestContext.Out.WriteLine("");
-            TestContext.Out.WriteLine("  map         period  shift |     peaks: n  rate |  regularised: n | player grid: n |   detector: n  rate  prec");
+            TestContext.Out.WriteLine("  map         period  shift |    peaks: n  rate | regularised: n | player grid: n | "
+                                      + string.Join(" | ", shares.Select(s => $"detector @{s:0.00}: n  rate  prec")));
 
             foreach (Row row in rows.OrderBy(r => r.MapPeriod))
             {
+                var detectorCells = shares.Select(s => row.Detected.TryGetValue(s, out Result at)
+                    ? $"{at.Count,4} {at.Rate,5:0.00} {at.Precision,4:0}%"
+                    : "  n/a");
+
                 TestContext.Out.WriteLine($"  {row.Id,-10} {row.MapPeriod,5:0}ms {row.Shift,5} | "
                                           + $"{row.Raw.Count,12} {row.Raw.Rate,5:0.00} | "
                                           + $"{row.Regularised.Count,15} | {row.PlayerGrid.Count,14} | "
-                                          + $"{row.Detected.Count,14} {row.Detected.Rate,5:0.00} {row.Detected.Precision,5:0}%");
+                                          + string.Join(" | ", detectorCells));
             }
 
             TestContext.Out.WriteLine("");
@@ -150,24 +170,39 @@ namespace ParaTactus.Tests
                          ("tracked, raw peaks", r => r.Raw),
                          ("tracked, regularised", r => r.Regularised),
                          ("tracked, player grid", r => r.PlayerGrid),
-                         ("trained detector", r => r.Detected),
                      })
             {
-                var rates = rows.Select(r => pick(r).Rate).ToArray();
-                var coverage = rows.Select(r => pick(r).Coverage).ToArray();
-                var precision = rows.Select(r => pick(r).Precision).ToArray();
-                var median = rows.Select(r => pick(r).Median).ToArray();
-
-                int onLevel = rates.Count(r => r > 0.75 && r < 1.33);
-
-                TestContext.Out.WriteLine($"  {name,-22} {Median(rates),7:0.00} {onLevel,10}/{rates.Length} "
-                                          + $"{Median(coverage),9:0}% {Median(precision),10:0}% {Median(median),10:0}ms");
+                Summarise(rows, name, pick);
             }
+
+            foreach (double share in shares)
+                Summarise(rows, $"detector @{share:0.00}", r => r.Detected[share]);
+        }
+
+        private static void Summarise(List<Row> rows, string name, Func<Row, Result> pick)
+        {
+            var rates = rows.Select(r => pick(r).Rate).ToArray();
+            var coverage = rows.Select(r => pick(r).Coverage).ToArray();
+            var precision = rows.Select(r => pick(r).Precision).ToArray();
+            var median = rows.Select(r => pick(r).Median).ToArray();
+
+            int onLevel = rates.Count(r => r > 0.75 && r < 1.33);
+
+            TestContext.Out.WriteLine($"  {name,-22} {Median(rates),7:0.00} {onLevel,10}/{rates.Length} "
+                                      + $"{Median(coverage),9:0}% {Median(precision),10:0}% {Median(median),10:0}ms");
         }
 
         /// <summary>
-        /// The beats the player uses today: peaks over the activation, spaced onto a metre, then levelled.
+        /// The beats the player uses today, produced the way the player produces them.
         /// </summary>
+        /// <remarks>
+        /// The tracker's own beat list rather than the peak picker's, and that is the whole point of doing it here
+        /// rather than in a probe. <c>BeatThisBeatTracker.Peaks</c> answers in frames and
+        /// <c>BeatTrainRegulariser.Regularise</c> takes milliseconds, so feeding one to the other is a factor of twenty
+        /// - and a first version of this did exactly that, which made the grid look as though it kept a sixteenth of
+        /// the beats and sent an afternoon into the metrical level decision. The tracker converts, because it has to in
+        /// order to have a beat time at all, and this uses the converted list.
+        /// </remarks>
         private static double[] ExistingPipeline(float[] samples, string activationPath)
         {
             if (!File.Exists(activationPath))
@@ -177,12 +212,13 @@ namespace ParaTactus.Tests
             tracker.Add(samples);
             tracker.Flush();
 
-            return BeatThisBeatTracker.Peaks(tracker.Activation.ToArray()).ToArray();
+            return tracker.Beats.ToArray();
         }
 
         private readonly struct Row
         {
-            public Row(string id, double mapPeriod, int shift, Result raw, Result regularised, Result playerGrid, Result detected)
+            public Row(string id, double mapPeriod, int shift, Result raw, Result regularised, Result playerGrid,
+                       Dictionary<double, Result> detected)
             {
                 Id = id;
                 MapPeriod = mapPeriod;
@@ -196,7 +232,7 @@ namespace ParaTactus.Tests
             public string Id { get; }
             public double MapPeriod { get; }
 
-            /// <summary>The octaves the grid was moved by for the whole track, which is the stage under suspicion.</summary>
+            /// <summary>The octaves the grid was moved by for the whole track.</summary>
             public int Shift { get; }
 
             /// <summary>The tracked beats before anything is done to them.</summary>
@@ -208,7 +244,8 @@ namespace ParaTactus.Tests
             /// <summary>The grid the player is actually handed.</summary>
             public Result PlayerGrid { get; }
 
-            public Result Detected { get; }
+            /// <summary>The trained detector, at each suppression share under test.</summary>
+            public Dictionary<double, Result> Detected { get; }
         }
 
         private readonly struct Result

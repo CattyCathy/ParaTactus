@@ -109,6 +109,18 @@ namespace ParaTactus.Tests
 
                 TestContext.Out.WriteLine($"track {fields[0]}: {regularised.Length} beats, {intervals.Count} intervals");
 
+                // The regularised beats themselves, in the units they are in, before any statistic is taken from them.
+                // Two measurements of the same track have disagreed by a factor of twenty in this investigation and
+                // every time it was a conversion rather than the data, so the raw values are printed rather than a
+                // summary of them.
+                TestContext.Out.WriteLine($"  the regularised beats, first ten: "
+                                          + string.Join(", ", regularised.Take(10).Select(v => v.ToString("0.00"))));
+                TestContext.Out.WriteLine($"  the last one is {regularised[^1]:0.00} and the track is "
+                                          + $"{samples.Length / 22.05:0}ms, so they cover "
+                                          + $"{100.0 * regularised[^1] / (samples.Length / 22.05):0.0}% of it");
+                TestContext.Out.WriteLine($"  the first ten intervals: "
+                                          + string.Join(", ", intervals.Take(10).Select(v => v.ToString("0.00"))));
+
                 float[] activation = each.Activation.ToArray();
                 double activationSeconds = activation.Length / 50.0;
 
@@ -191,6 +203,33 @@ namespace ParaTactus.Tests
 
                 TestContext.Out.WriteLine($"  merged widths: {string.Join(", ", widths.Take(20))}"
                                           + (widths.Count > 20 ? $" ... ({widths.Count} groups)" : ""));
+
+                // The same activation put through every entry point, side by side and with the units stated in each
+                // line, because these calls disagree by a factor of twenty between frames and milliseconds and reading
+                // one against the other has already produced two false conclusions in this investigation.
+                var raw = BeatThisBeatTracker.RawPeaks(activation);
+                var publicPeaks = BeatThisBeatTracker.Peaks(activation);
+
+                TestContext.Out.WriteLine("");
+                TestContext.Out.WriteLine("  the same activation through every entry point:");
+                TestContext.Out.WriteLine($"    FramePeaks  says {frames.Count} frames, first {frames.FirstOrDefault()}, "
+                                          + $"last {frames.LastOrDefault()}, of {activation.Length}");
+
+                TestContext.Out.WriteLine($"    RawPeaks    says {raw.Count} values, first {raw.FirstOrDefault():0.00}, "
+                                          + $"last {raw.LastOrDefault():0.00}   [frames, fractional]");
+                TestContext.Out.WriteLine($"    Peaks       says {publicPeaks.Count} values, first {publicPeaks.FirstOrDefault():0.00}, "
+                                          + $"last {publicPeaks.LastOrDefault():0.00}   [frames, fractional]");
+
+                // The beats the tracker recorded, converted back to frames, which is the comparison that matters: the
+                // same quantity as the two lines above rather than a time that has to be divided to compare.
+                TestContext.Out.WriteLine($"    the tracker recorded {each.Beats.Count} beats, first "
+                                          + $"{each.Beats.FirstOrDefault():0.00}, last {each.Beats.LastOrDefault():0.00}   [milliseconds]");
+                TestContext.Out.WriteLine($"    the same in frames: first {each.Beats.FirstOrDefault() / 20:0.00}, "
+                                          + $"last {each.Beats.LastOrDefault() / 20:0.00} of {activation.Length}");
+                TestContext.Out.WriteLine($"    so the recorded beats stop at "
+                                          + $"{100.0 * (each.Beats.LastOrDefault() / 20) / Math.Max(1, activation.Length):0.0}% "
+                                          + $"of the activation, against {100.0 * publicPeaks.LastOrDefault() / Math.Max(1, activation.Length):0.0}% "
+                                          + "for the peaks the picker returns");
 
                 // The activation sampled across the track, because a length that covers the track and a last peak five
                 // per cent of the way in is a contradiction that only the values themselves can resolve.

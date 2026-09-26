@@ -43,12 +43,15 @@ namespace ParaTactus
         /// How much of the predicted period two beats have to be apart, as a share of it.
         /// </summary>
         /// <remarks>
-        /// Measured rather than chosen. Swept against twelve beatmaps, the share trades coverage against level: at 0.5
-        /// the reading reports 1.31 times the map's beats with 91% coverage, at 0.75 it reports 1.04 with 85%, and at
-        /// 0.9 it reports 0.96 with 75% - so 0.9 is more precise and drops beats it should keep, and the level is right
-        /// at both 0.75 and 0.9.
+        /// Measured rather than chosen, and re-measured after a first version of the comparison turned out to have been
+        /// reading the peak picker's frames as milliseconds. Swept against a dozen beatmaps and their own timing
+        /// points, the share trades how much of the map is covered against how far the reading drifts from the map's
+        /// level: at 0.9 the detector reports 0.96 of the map's beats and covers 75% of them, at 0.6 it reports 1.17 and
+        /// covers 89%, and at 0.5 it reports 1.31 and covers 91%. The value in use is a compromise between those, and
+        /// the honest reading of the sweep is that the detector is not clearly better than the peak picking this
+        /// library already has - see the remarks on <see cref="LearnedBeatDetector"/>.
         /// </remarks>
-        private const double suppression_share = 0.75;
+        private const double suppression_share = 0.6;
 
         private readonly SessionOptions options;
         private readonly Lazy<InferenceSession> session;
@@ -88,6 +91,16 @@ namespace ParaTactus
         /// </remarks>
         public double[] Beats(IReadOnlyList<float> samples)
         {
+            return Beats(samples, suppression_share);
+        }
+
+        /// <summary>
+        /// The same, with the suppression share named by the caller, so it can be swept against a reference.
+        /// </summary>
+        /// <param name="samples">Mono audio at <see cref="LogMel.SampleRate"/>.</param>
+        /// <param name="share">How much of the predicted period two beats have to be apart.</param>
+        public double[] Beats(IReadOnlyList<float> samples, double share)
+        {
             if (samples == null)
                 throw new ArgumentNullException(nameof(samples));
 
@@ -96,7 +109,7 @@ namespace ParaTactus
             if (beats.Length == 0)
                 return Array.Empty<double>();
 
-            int[] chosen = Suppress(beats, periods);
+            int[] chosen = Suppress(beats, periods, share);
 
             var times = new double[chosen.Length];
 
@@ -194,6 +207,17 @@ namespace ParaTactus
         /// </remarks>
         public static int[] Suppress(float[] beats, float[] periods)
         {
+            return Suppress(beats, periods, suppression_share);
+        }
+
+        /// <summary>
+        /// The same, with the share named by the caller, so it can be swept against a reference rather than assumed.
+        /// </summary>
+        /// <param name="beats">The model's beat confidence, one value per frame.</param>
+        /// <param name="periods">The predicted period in frames, one per frame.</param>
+        /// <param name="share">How much of the predicted period two beats have to be apart.</param>
+        public static int[] Suppress(float[] beats, float[] periods, double share)
+        {
             if (beats == null)
                 throw new ArgumentNullException(nameof(beats));
 
@@ -223,7 +247,7 @@ namespace ParaTactus
 
                 chosen.Add(index);
 
-                int radius = (int)Math.Max(1, suppression_share * periods[index]);
+                int radius = (int)Math.Max(1, share * periods[index]);
 
                 for (int other = Math.Max(0, index - radius + 1); other <= Math.Min(beats.Length - 1, index + radius - 1); other++)
                     taken[other] = true;
