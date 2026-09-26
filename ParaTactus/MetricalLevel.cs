@@ -114,7 +114,16 @@ namespace ParaTactus
         /// <summary>
         /// The share of a track's beat intervals whose tempo lands in the comfortable range after a shift.
         /// </summary>
-        private static double ShareInRange(IReadOnlyList<double> intervals, int shift, double minimumBpm, double maximumBpm)
+        /// <summary>
+        /// How much of a reading a shift would bring into the comfortable range, for inspection.
+        /// </summary>
+        /// <remarks>
+        /// Exposed because the decision this feeds is a comparison between shifts, and the shift that won is not
+        /// enough to tell whether it won clearly or by a hundredth. A track whose best shift fixes a bare majority of
+        /// its intervals is a track with more than one tempo in it, where no single octave is the right answer for all
+        /// of it - and that is the case this is most likely to get wrong.
+        /// </remarks>
+        internal static double ShareInRange(IReadOnlyList<double> intervals, int shift, double minimumBpm, double maximumBpm)
         {
             double divisor = Math.Pow(2, shift);
             int inside = 0;

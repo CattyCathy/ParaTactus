@@ -189,6 +189,332 @@ namespace ParaTactus.Tests
         }
 
         /// <summary>
+        /// What the regulariser's global octave fold does to each part of a track whose tempo moves.
+        /// </summary>
+        /// <remarks>
+        /// Peak picking and the search both place beats, and neither decides how many there should be: a beat model
+        /// reports a beat wherever the music has an event, so on a track with a section at half the density of the rest
+        /// it reports the events of both at whatever density they are. The regulariser is what turns that into a metre,
+        /// and it does it by comparing every passage against one number - the track's dominant period - and halving or
+        /// doubling the local period until it is within half again of that number.
+        ///
+        /// One number for a whole track is a strong claim. A track whose tempo genuinely moves by more than a factor of
+        /// 1.5 - a section at 100 BPM against a track that mostly sits at 180, say - has passages that are legitimately
+        /// far from the dominant, and every one of them is folded onto it. The intervals then come out regular and the
+        /// density in those passages is wrong, which is what a listener hears as the pulses holding a steady spacing
+        /// while they stop agreeing with the music.
+        ///
+        /// This reads the fold directly rather than through the output: the dominant the walk used, the local period at
+        /// every beat, and how many factors of two each was moved by. Read the histogram for whether the fold fires at
+        /// all, and the per-section table for whether the passages it fires on are the ones the beatmap says are at a
+        /// different tempo.
+        /// </remarks>
+        [Test]
+        public void ShowWhatTheRegularisersOctaveFoldDoesToEachSection()
+        {
+            string corpus = Environment.GetEnvironmentVariable("OSUTEST_CORPUS");
+
+            if (string.IsNullOrEmpty(corpus) || !Directory.Exists(corpus))
+                Assert.Ignore("Set OSUTEST_CORPUS to a folder holding .osu files and their audio.");
+
+            string modelPath = Environment.GetEnvironmentVariable("OSUTEST_MODEL")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", $"{defaultModel}.onnx");
+
+            if (!File.Exists(modelPath))
+                Assert.Ignore($"no model at {modelPath}");
+
+            string wanted = Environment.GetEnvironmentVariable("OSUTEST_MAP");
+            string map = Directory.EnumerateFiles(corpus, "*.osu", SearchOption.AllDirectories)
+                                  .FirstOrDefault(f => wanted == null
+                                                       || Path.GetFileName(f).Contains(wanted, StringComparison.OrdinalIgnoreCase));
+
+            if (map == null)
+                Assert.Ignore($"no .osu file in {corpus} matching {wanted}");
+
+            string folder = Path.GetDirectoryName(map);
+            string audio = folder == null ? null : audioFor(map, folder);
+
+            if (audio == null)
+                Assert.Ignore($"no audio beside {map}");
+
+            List<TimingPoint> timing = timingPoints(map);
+
+            TestContext.Out.WriteLine($"beatmap: {Path.GetFileName(map)}");
+            TestContext.Out.WriteLine($"  its own tempo: {(timing.Count <= 1 ? $"{60000 / timing[0].BeatLength:0} BPM held" : $"{60000 / timing.Max(p => p.BeatLength):0}-{60000 / timing.Min(p => p.BeatLength):0} BPM over {timing.Count} points")}");
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
+
+            double[] picked = BeatThisBeatTracker.Peaks(activations)
+                                                 .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                 .ToArray();
+
+            double dominant = BeatTrainRegulariser.Dominant(picked);
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine($"the tracker's {picked.Length} picked beats give a dominant period of {dominant:0}ms, or {60000 / dominant:0} BPM");
+            TestContext.Out.WriteLine($"  so the fold leaves alone every passage between {dominant * 0.59:0}ms and {dominant * 1.5:0}ms");
+            TestContext.Out.WriteLine($"  which is {60000 / (dominant * 1.5):0} to {60000 / (dominant * 0.59):0} BPM");
+
+            // The fold itself, replayed on the tracker's own beats so the count of shifts can be reported. This is the
+            // same arithmetic the regulariser applies, read for what it did rather than for what came out.
+            var shifts = new SortedDictionary<int, int>();
+
+            for (int i = 0; i < picked.Length; i++)
+            {
+                double p = BeatTrainRegulariser.LocalPeriodAt(picked, i);
+
+                if (p <= 0)
+                    continue;
+
+                int moved = 0;
+
+                if (dominant > 0)
+                {
+                    for (int shift = 0; shift < 8; shift++)
+                    {
+                        double factor = p / dominant;
+
+                        if (factor >= 1.5)
+                        {
+                            p /= 2;
+                            moved--;
+                        }
+                        else if (factor <= 0.59)
+                        {
+                            p *= 2;
+                            moved++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                shifts[moved] = shifts.TryGetValue(moved, out int seen) ? seen + 1 : 1;
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("how many factors of two the fold moved each beat's local period by:");
+            TestContext.Out.WriteLine("  (a passage faster than the dominant has its period divided, which moves it up a level)");
+
+            foreach (var pair in shifts)
+            {
+                string label = pair.Key == 0
+                    ? "left alone"
+                    : pair.Key < 0
+                        ? $"period / {1 << -pair.Key}"
+                        : $"period * {1 << pair.Key}";
+
+                TestContext.Out.WriteLine($"  {label,-20} {pair.Value,6} beats");
+            }
+
+            // The same question from the beatmap's side: which of its own tempo sections sit outside the band, and so
+            // are the ones the fold is entitled to move. If those are the passages that sound wrong, the fold is the
+            // thing to change; if the wrong passages are inside the band, it is not.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the beatmap's own tempo sections, and whether the fold may move them:");
+            TestContext.Out.WriteLine("   at      BPM    period   inside the band   the tracker's local period there");
+
+            foreach (TimingPoint point in timing.Take(24))
+            {
+                bool inside = point.BeatLength >= dominant * 0.59 && point.BeatLength <= dominant * 1.5;
+                double local = nearestLocalPeriod(picked, point.Time);
+
+                TestContext.Out.WriteLine($"  {point.Time / 1000,5:0}s {60000 / point.BeatLength,6:0} {point.BeatLength,8:0}ms   {(inside ? "yes" : "no "),-16} {local,8:0}ms");
+            }
+
+            if (timing.Count > 24)
+                TestContext.Out.WriteLine($"  ... and {timing.Count - 24} more sections");
+        }
+
+        /// <summary>
+        /// The grid the player is actually given, at each of the settings it can be given one.
+        /// </summary>
+        /// <remarks>
+        /// Every other reading in this probe is an intermediate: the model's peaks, the merged beats, the search. The
+        /// player never sees any of those. What it draws comes out of <see cref="BeatGrid.FromBeats"/>, which passes the
+        /// beats through <see cref="MetricalLevel.Normalise"/> on the way, and that is a third whole-track octave
+        /// decision sitting on top of the two already in the beat train. Measuring the intermediate readings and not
+        /// this one is how a grid can come out at the wrong level while every number in the probe looks reasonable.
+        ///
+        /// The metrical shift is reported because it is the decision itself rather than its result: a positive shift is
+        /// the grid having been thinned by that many octaves and a negative one its having been subdivided, and either
+        /// applies to the whole track at once.
+        /// </remarks>
+        [Test]
+        public void ShowTheGridThePlayerActuallyDraws()
+        {
+            string corpus = Environment.GetEnvironmentVariable("OSUTEST_CORPUS");
+
+            if (string.IsNullOrEmpty(corpus) || !Directory.Exists(corpus))
+                Assert.Ignore("Set OSUTEST_CORPUS to a folder holding .osu files and their audio.");
+
+            string modelPath = Environment.GetEnvironmentVariable("OSUTEST_MODEL")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", $"{defaultModel}.onnx");
+
+            if (!File.Exists(modelPath))
+                Assert.Ignore($"no model at {modelPath}");
+
+            string wanted = Environment.GetEnvironmentVariable("OSUTEST_MAP");
+            string map = Directory.EnumerateFiles(corpus, "*.osu", SearchOption.AllDirectories)
+                                  .FirstOrDefault(f => wanted == null
+                                                       || Path.GetFileName(f).Contains(wanted, StringComparison.OrdinalIgnoreCase));
+
+            if (map == null)
+                Assert.Ignore($"no .osu file in {corpus} matching {wanted}");
+
+            string folder = Path.GetDirectoryName(map);
+            string audio = folder == null ? null : audioFor(map, folder);
+
+            if (audio == null)
+                Assert.Ignore($"no audio beside {map}");
+
+            List<TimingPoint> timing = timingPoints(map);
+
+            TestContext.Out.WriteLine($"beatmap: {Path.GetFileName(map)}");
+            TestContext.Out.WriteLine($"  its own tempo: {(timing.Count <= 1 ? $"{60000 / timing[0].BeatLength:0} BPM held" : $"{60000 / timing.Max(p => p.BeatLength):0}-{60000 / timing.Min(p => p.BeatLength):0} BPM over {timing.Count} points")}");
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
+
+            double[] picked = BeatThisBeatTracker.Peaks(activations)
+                                                 .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                 .ToArray();
+
+            double[] searched = BeatSequenceSearch.Frames(activations, null)
+                                                  .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                  .ToArray();
+
+            double[] regularised = BeatTrainRegulariser.Regularise(picked);
+
+            double until = new[] { picked, searched, regularised }.Max(set => set.Length > 0 ? set[^1] : 0);
+            double[] mapGrid = beatmapGrid(timing, until);
+
+            // What the beatmap's own beats run at, as the rate the grid ought to be aiming for. The median gap rather
+            // than the mean, because a map's tempo points include its slow sections and the mean is dragged by them.
+            double mapInterval = medianInterval(mapGrid);
+
+            TestContext.Out.WriteLine($"  the map's own beats are {1000 / mapInterval:0.00} a second, one every {mapInterval:0}ms");
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the same beats at each stage, and the grid each stage hands the player:");
+            TestContext.Out.WriteLine("  stage                                                count   rate    median gap");
+
+            stage("the model's peaks, pruned", picked);
+            stage("the peaks onto a regular spacing", regularised);
+            stage("the tempo search", searched);
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("what the player gets, at each setting it can have:");
+            TestContext.Out.WriteLine("  grid                                                 count   rate   metrical shift");
+
+            grid_("peaks, regularised, then the metrical level", BeatGrid.FromBeats(regularised));
+            grid_("the search, then the metrical level", BeatGrid.FromBeats(searched));
+
+            // The search's own beat count is a function of the floor and nothing else - see the sweep above - so the
+            // floor is the one dial that can put it on the same level as the peaks. Reported as a grid rather than as a
+            // reading because a floor that matches the peaks in count can still be folded differently by the metrical
+            // level, and what matters is where it lands after that.
+            foreach (double floor in new[] { 1.0, 1.5, 2.0 })
+            {
+                double[] atFloor = BeatSequenceSearch.Frames(activations, null, BeatSequenceSearch.DefaultTempoRigidity, floor)
+                                                     .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                     .ToArray();
+
+                grid_($"the search at floor {floor:0.0}, then the metrical level", BeatGrid.FromBeats(atFloor));
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("and the same two grids without the metrical level being decided at all, for contrast:");
+            TestContext.Out.WriteLine("  grid                                                 count   rate   metrical shift");
+
+            grid_("peaks, regularised, no metrical level", BeatGrid.FromNormalisedBeats(regularised, 0));
+            grid_("the search, no metrical level", BeatGrid.FromNormalisedBeats(searched, 0));
+
+            // Which octave the level decision preferred, and how strongly. A majority barely over the threshold is a
+            // track whose tempo genuinely moves and where one level for all of it is a poor description; one near one is
+            // a track at a single level and the decision is easy.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the metrical level decision on each reading:");
+            TestContext.Out.WriteLine("  reading                                  shift        share inside 80-220 BPM");
+
+            foreach ((string name, double[] beats) in new[] { ("peaks, regularised", regularised), ("the search", searched) })
+            {
+                var intervals = new List<double>();
+
+                for (int i = 1; i < beats.Length; i++)
+                {
+                    if (beats[i] - beats[i - 1] > 0)
+                        intervals.Add(beats[i] - beats[i - 1]);
+                }
+
+                int shift = MetricalLevel.ChooseShift(beats);
+
+                TestContext.Out.WriteLine($"  {name,-40} {shift,5}   {100 * MetricalLevel.ShareInRange(intervals, shift, MetricalLevel.DefaultMinimumBpm, MetricalLevel.DefaultMaximumBpm),22:0.0}%");
+
+                // Every shift rather than the one that won. The decision is a majority vote, so a reading that is in
+                // the wrong octave but not overwhelmingly so loses the vote and is left where it is - and the numbers
+                // that say whether that happened are the shares at the shifts that were not taken.
+                for (int candidate = -2; candidate <= 2; candidate++)
+                {
+                    double share = 100 * MetricalLevel.ShareInRange(intervals, candidate, MetricalLevel.DefaultMinimumBpm, MetricalLevel.DefaultMaximumBpm);
+
+                    TestContext.Out.WriteLine($"      at shift {candidate,2}: {share,5:0.0}% of intervals in the band{(share >= 100 * MetricalLevel.DefaultMajority ? "  <- would win a vote" : "")}");
+                }
+            }
+
+            // What the wrong octave costs, in the terms a listener hears. The grid is right when a beat of it is near a
+            // beat of the map; at twice the map's rate every other beat of the grid has no map beat to be near, and at
+            // half the rate half the map's beats go by with nothing. Both are reported, because "twice as many" and
+            // "half as many" are different faults and the fix is different.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("each grid against the map's own beats:");
+            TestContext.Out.WriteLine("  reading                                              count   rate   median      p90  covered   settled  scatter");
+
+            foreach ((string name, BeatGrid grid) in new[]
+                     {
+                         ("peaks, regularised, then the metrical level", BeatGrid.FromBeats(regularised)),
+                         ("the search, then the metrical level", BeatGrid.FromBeats(searched)),
+                     })
+            {
+                report(name, grid.Beats.ToArray(), mapGrid);
+            }
+        }
+
+        /// <summary>One stage of the beat train, as a count, a rate and a middle gap.</summary>
+        private static void stage(string name, double[] beats)
+        {
+            double middle = medianInterval(beats);
+
+            TestContext.Out.WriteLine($"  {name,-52} {beats.Length,6} {(middle > 0 ? $"{1000 / middle,6:0.00}" : "   n/a")} {middle,11:0}ms");
+        }
+
+        /// <summary>One grid, as a count, a rate and the octave it was moved by.</summary>
+        private static void grid_(string name, BeatGrid grid)
+        {
+            double middle = medianInterval(grid.Beats.ToArray());
+
+            TestContext.Out.WriteLine($"  {name,-52} {grid.Beats.Count,6} {(middle > 0 ? $"{1000 / middle,6:0.00}" : "   n/a")} {grid.MetricalShift,16}");
+        }
+        private static double nearestLocalPeriod(double[] beats, double time)
+        {
+            if (beats.Length == 0)
+                return 0;
+
+            int best = 0;
+
+            for (int i = 1; i < beats.Length; i++)
+            {
+                if (Math.Abs(beats[i] - time) < Math.Abs(beats[best] - time))
+                    best = i;
+            }
+
+            return BeatTrainRegulariser.LocalPeriodAt(beats, best);
+        }
+
+        /// <summary>
         /// Writes a window of a track with the map's beat and the tracker's beat marked by different clicks.
         /// </summary>
         /// <remarks>

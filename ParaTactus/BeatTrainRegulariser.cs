@@ -173,16 +173,6 @@ namespace ParaTactus
         }
 
         /// <summary>
-        /// The beat period the track spends most of its time at, weighted by how long it spends there.
-        /// </summary>
-        /// <remarks>
-        /// Weighted by duration rather than by beat count, because a passage at double density has twice as many beats
-        /// for the same amount of music and would otherwise outvote the rest of the track simply by being fast.
-        ///
-        /// A factor of two away from this is the ambiguity being resolved and nothing else is touched: a passage at the
-        /// same level as the rest of the track keeps whatever tempo it has, including a real change short of an octave.
-        /// </remarks>
-        /// <summary>
         /// The period the track spends most of its time at, for inspection.
         /// </summary>
         /// <remarks>
@@ -239,34 +229,6 @@ namespace ParaTactus
                 {
                     bestWeight = weight;
                     best = candidate;
-                }
-            }
-
-            return best;
-        }
-        private static int dominantOctave(IReadOnlyList<double> beats, double[] period, int[] octave)
-        {
-            var weight = new Dictionary<int, double>();
-
-            for (int i = 0; i + 1 < beats.Count; i++)
-            {
-                if (octave[i] == int.MinValue)
-                    continue;
-
-                double span = beats[i + 1] - beats[i];
-
-                weight[octave[i]] = weight.TryGetValue(octave[i], out double seen) ? seen + span : span;
-            }
-
-            int best = int.MinValue;
-            double bestWeight = 0;
-
-            foreach (var pair in weight)
-            {
-                if (pair.Value > bestWeight)
-                {
-                    bestWeight = pair.Value;
-                    best = pair.Key;
                 }
             }
 
