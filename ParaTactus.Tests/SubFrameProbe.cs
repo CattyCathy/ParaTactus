@@ -543,7 +543,32 @@ namespace ParaTactus.Tests
 
             TestContext.Out.WriteLine($"  the tracker picked {picked.Length} beats; the regulariser's dominant period is {dominant:0}ms, or {60000 / dominant:0} BPM");
             TestContext.Out.WriteLine($"  the regulariser kept {regularised.Length} of them ({100.0 * regularised.Length / Math.Max(1, picked.Length):0}%)");
-            TestContext.Out.WriteLine($"  the beatmap's own beats are one every {medianInterval(beatmapGrid(timing, picked.Length > 0 ? picked[^1] : 0)):0}ms");
+
+            double mapInterval = medianInterval(beatmapGrid(timing, picked.Length > 0 ? picked[^1] : 0));
+
+            TestContext.Out.WriteLine($"  the beatmap's own beats are one every {mapInterval:0}ms");
+
+            // What the regularisation did to the spacing, which is the question and not how many beats survived it. The
+            // walk can lose beats by deciding they are subdivisions and it can put them back by deciding a gap is a
+            // missed beat, and a count alone does not say which happened or where. The distribution of the output's own
+            // gaps does: an output that is mostly twice the input's spacing is the first, and one with a spike at the
+            // input's spacing is neither.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the gaps the regulariser produced, in 20ms buckets:");
+
+            var outputGaps = new SortedDictionary<int, int>();
+
+            for (int i = 1; i < regularised.Length; i++)
+            {
+                int bucket = (int)(Math.Round((regularised[i] - regularised[i - 1]) / 20) * 20);
+
+                outputGaps[bucket] = outputGaps.TryGetValue(bucket, out int seen) ? seen + 1 : 1;
+            }
+
+            TestContext.Out.WriteLine("     gap    count");
+
+            foreach (var pair in outputGaps.OrderByDescending(pair => pair.Value).Take(8))
+                TestContext.Out.WriteLine($"  {pair.Key,6}ms {pair.Value,6}");
 
             // The gaps the tracker actually produced, which is what the local period is measured from. A spike at twice
             // the map's interval with almost nothing at the map's own interval is the signature of a passage lost by
@@ -594,6 +619,76 @@ namespace ParaTactus.Tests
                 TestContext.Out.WriteLine($"  {picked[index] / 1000,5:0}s {gap,7:0}ms {period,12:0}ms {ratio,12:0.00}   {verdict}");
             }
 
+            // The map's hit objects, which are where a player actually clicks, against the timing points the reference
+            // grid is built from. These are not the same thing and the difference is not small: a map's timing points
+            // are the scroll speed as much as the music, so a single 200 BPM point held over a whole track can describe
+            // music that plays at half that or at four times it. On t+pazolite's Cheatreal the grid says one beat every
+            // 300ms while the hit objects come 80ms apart, and the tracker - which reads 649 beats a median 34ms from
+            // those objects, 94% of them within 60ms - is right and the grid is not. Every distance in this suite is
+            // measured against that grid, so a map whose objects disagree with its points is a map whose numbers here
+            // mean nothing, and the disagreement has to be visible before the numbers are read.
+            var objects = hitObjects(map);
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the map's own hit objects, as a check on the reference grid:");
+
+            if (objects.Count < 2)
+            {
+                TestContext.Out.WriteLine("  none found, so the grid above cannot be corroborated");
+            }
+            else
+            {
+                var objectGaps = new SortedDictionary<int, int>();
+
+                for (int i = 1; i < objects.Count; i++)
+                {
+                    int bucket = (int)(Math.Round((objects[i] - objects[i - 1]) / 20) * 20);
+
+                    if (bucket > 0)
+                        objectGaps[bucket] = objectGaps.TryGetValue(bucket, out int seen) ? seen + 1 : 1;
+                }
+
+                int common = objectGaps.OrderByDescending(pair => pair.Value).First().Key;
+
+                TestContext.Out.WriteLine($"  {objects.Count} of them; the commonest gap between consecutive ones is {common}ms, "
+                                          + $"against the grid's {mapInterval:0}ms");
+
+                if (common < mapInterval * 0.75)
+                {
+                    TestContext.Out.WriteLine("  the objects are much closer together than the grid says the beat is, so the grid is");
+                    TestContext.Out.WriteLine("  the scroll speed and not the music - distances measured against it are not accuracy");
+                }
+
+                // How near the tracker's beats are to an object, which needs no timing points at all.
+                double[] sorted = objects.OrderBy(t => t).ToArray();
+                var distances = new List<double>();
+
+                foreach (double beat in picked)
+                {
+                    int index = Array.BinarySearch(sorted, beat);
+
+                    if (index < 0)
+                        index = ~index;
+
+                    double best = double.MaxValue;
+
+                    for (int k = Math.Max(0, index - 2); k < Math.Min(sorted.Length, index + 2); k++)
+                        best = Math.Min(best, Math.Abs(sorted[k] - beat));
+
+                    if (best < double.MaxValue)
+                        distances.Add(best);
+                }
+
+                if (distances.Count > 0)
+                {
+                    distances.Sort();
+
+                    TestContext.Out.WriteLine($"  the tracker's beats against those objects: median {distances[distances.Count / 2]:0}ms, "
+                                              + $"p90 {distances[Math.Min(distances.Count - 1, (int)(distances.Count * 0.9))]:0}ms, "
+                                              + $"{100.0 * distances.Count(d => d <= 60) / distances.Count:0}% within 60ms");
+                }
+            }
+
             // The evidence that is not the beats themselves. Whether a long gap is a missed beat or a real change of
             // tempo is invisible in the beat positions - the gap is the same shape either way - and visible in the
             // model's own activation, which either believes in a beat in the middle of it or does not. What is needed
@@ -603,10 +698,6 @@ namespace ParaTactus.Tests
             TestContext.Out.WriteLine("what the model believes in the middle of each gap, which is what tells a missed beat");
             TestContext.Out.WriteLine("from a genuine one:");
             TestContext.Out.WriteLine("   gap class    gaps   midpoint above zero   midpoint is a local peak   midpoint - track mean   best within 100ms");
-
-            // The gap classes are read off the map's own beat, so they mean something: a gap of one map beat is the
-            // track's own spacing and needs no beat inside it, and a gap of two is exactly where one is missing.
-            double mapInterval = medianInterval(beatmapGrid(timing, picked.Length > 0 ? picked[^1] : 0));
 
             // Before any of the distances is believed, the reference itself has to be checked. Every number here is a
             // distance from this grid, and a grid built wrongly makes the tracker look wrong by exactly as much. What
@@ -826,6 +917,45 @@ namespace ParaTactus.Tests
                 TestContext.Out.WriteLine($"  gaps of {classes}: {shares.Count,5} of them, share at the 25th/50th/75th percentile "
                                           + $"{shares[shares.Count / 4],5:0.00} / {shares[shares.Count / 2],5:0.00} / {shares[shares.Count * 3 / 4],5:0.00}");
             }
+        }
+
+        /// <summary>The times of a map's hit objects, which is where a player clicks.</summary>
+        /// <remarks>
+        /// Read from the section rather than from the whole file, and stopping at the next section header, for the same
+        /// reason the timing points are: an object line is <c>x,y,time,type,...</c> and a parse that runs past the
+        /// section reads the rest of the file as objects.
+        /// </remarks>
+        private static List<double> hitObjects(string map)
+        {
+            var times = new List<double>();
+
+            bool inObjects = false;
+
+            foreach (string raw in File.ReadLines(map))
+            {
+                string line = raw.Trim();
+
+                if (line.StartsWith("[", StringComparison.Ordinal))
+                {
+                    inObjects = line.Equals("[HitObjects]", StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+
+                if (!inObjects || line.Length == 0)
+                    continue;
+
+                string[] fields = line.Split(',');
+
+                if (fields.Length >= 3
+                    && double.TryParse(fields[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double time))
+                {
+                    times.Add(time);
+                }
+            }
+
+            times.Sort();
+
+            return times;
         }
 
         /// <summary>The frame halfway between two beats.</summary>
