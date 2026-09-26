@@ -46,10 +46,14 @@ namespace ParaTactus
         /// Measured rather than chosen, and re-measured after a first version of the comparison turned out to have been
         /// reading the peak picker's frames as milliseconds. Swept against a dozen beatmaps and their own timing
         /// points, the share trades how much of the map is covered against how far the reading drifts from the map's
-        /// level: at 0.9 the detector reports 0.96 of the map's beats and covers 75% of them, at 0.6 it reports 1.17 and
-        /// covers 89%, and at 0.5 it reports 1.31 and covers 91%. The value in use is a compromise between those, and
-        /// the honest reading of the sweep is that the detector is not clearly better than the peak picking this
-        /// library already has - see the remarks on <see cref="LearnedBeatDetector"/>.
+        /// level: at 0.75 the detector reports 0.87 of the map's beats and covers 67% of them, at 0.6 it reports 1.03
+        /// and covers 81%, at 0.5 it reports 1.26 and covers 90%, and at 0.4 it reports 1.50 and covers 93%.
+        ///
+        /// Six tenths is the value that puts the reported rate where it belongs across a corpus, and it is not the best
+        /// value for every kind of material. On the fastest beatmaps in the corpus - eight of them at 200 to 290ms -
+        /// five tenths is better on every measure that matters and six tenths is worse: at 0.5 the rate is 0.95 with
+        /// the metrical level right on all eight, against 0.82 and five of eight at 0.6. A caller that knows its
+        /// material is fast should pass its own share; <see cref="Beats(IReadOnlyList{float}, double)"/> takes one.
         /// </remarks>
         private const double suppression_share = 0.6;
 

@@ -59,6 +59,12 @@ namespace ParaTactus.Tests
 
             int limit = int.TryParse(Environment.GetEnvironmentVariable("OSUTEST_LIMIT"), out int wanted) ? wanted : 12;
 
+            // Which tracks to measure. The manifest is ordered by identifier, which has nothing to do with tempo, so a
+            // first twelve taken in that order is an arbitrary sample and the "four fastest" of it is four arbitrary
+            // tracks. OSUTEST_FASTEST takes the shortest label periods instead, which is the material the objective
+            // names, and OSUTEST_OLDEST keeps the manifest order for a comparison with earlier runs.
+            bool fastest = string.Equals(Environment.GetEnvironmentVariable("OSUTEST_FASTEST"), "true", StringComparison.OrdinalIgnoreCase);
+
             // The suppression shares to sweep, as a comma-separated list.
             string shareList = Environment.GetEnvironmentVariable("OSUTEST_SHARES") ?? "0.4,0.5,0.6,0.75";
             double[] shares = shareList.Split(',')
@@ -74,24 +80,30 @@ namespace ParaTactus.Tests
             foreach (string file in Directory.EnumerateFiles(corpus, "*.osz", SearchOption.AllDirectories))
                 archives[Path.GetFileName(file).Split(' ')[0]] = file;
 
+            var lines = File.ReadLines(Path.Combine(dataset, "manifest.tsv")).Skip(1)
+                            .Select(line => line.Split('\t'))
+                            .Where(fields => fields.Length >= 7 && archives.ContainsKey(fields[0])
+                                             && File.Exists(Path.Combine(dataset, "audio", fields[2])))
+                            .ToList();
+
+            if (fastest)
+            {
+                lines = lines
+                        .OrderBy(fields => double.TryParse(fields[6], NumberStyles.Float, CultureInfo.InvariantCulture, out double p) ? p : double.MaxValue)
+                        .ToList();
+            }
+
             var rows = new List<Row>();
 
             using var detector = new LearnedBeatDetector(detectorPath);
 
-            foreach (string line in File.ReadLines(Path.Combine(dataset, "manifest.tsv")).Skip(1))
+            foreach (string[] fields in lines)
             {
                 if (rows.Count >= limit)
                     break;
 
-                string[] fields = line.Split('\t');
-
-                if (fields.Length < 7 || !archives.TryGetValue(fields[0], out string archive))
-                    continue;
-
+                string archive = archives[fields[0]];
                 string audioPath = Path.Combine(dataset, "audio", fields[2]);
-
-                if (!File.Exists(audioPath))
-                    continue;
 
                 float[] samples = ReadAudio(audioPath);
                 double seconds = samples.Length / (double)LogMel.SampleRate;
@@ -136,12 +148,12 @@ namespace ParaTactus.Tests
 
             // The maps whose own beat is fastest, which is the material the objective names and the material a median
             // over the corpus hides.
-            var fastest = rows.OrderBy(r => r.MapPeriod).Take(4).ToList();
+            var quickest = rows.OrderBy(r => r.MapPeriod).Take(Math.Min(4, rows.Count)).ToList();
 
             TestContext.Out.WriteLine("");
-            TestContext.Out.WriteLine("the four fastest beatmaps, on their own:");
+            TestContext.Out.WriteLine($"the {quickest.Count} fastest beatmaps of those measured, on their own:");
 
-            Report(fastest, shares);
+            Report(quickest, shares);
         }
 
         private static void Report(List<Row> rows, double[] shares)
