@@ -60,127 +60,255 @@ namespace ParaTactus.Tests
                 Assert.Ignore($"no model at {modelPath}");
 
             List<TimingPoint> timing = timingPoints();
-            List<double> beats = analyse(audio, modelPath);
 
-            TestContext.Out.WriteLine($"timing points: {timing.Count}; first tempo {60000 / timing[0].BeatLength:0.#} BPM "
-                                      + $"from {timing[0].Time:0}ms to {steady_until_ms:0}ms");
-            TestContext.Out.WriteLine($"beats: {beats.Count} over {beats[^1] / 1000:0.#}s");
+            // The reference grid, built the way the tempo agreement test builds it: each timing point's own tempo laid
+            // out from that point until the next one.
+            double[] grid = beatmapGrid(timing);
 
-            // The reference grid: the map's own tempo from its own offset, out to where the tempo changes.
-            var reference = new List<double>();
+            List<double> raw = analyse(audio, modelPath, regularise: false);
+            List<double> regularised = analyse(audio, modelPath, regularise: true);
 
-            for (double t = timing[0].Time; t <= steady_until_ms; t += timing[0].BeatLength)
-                reference.Add(t);
-
-            TestContext.Out.WriteLine($"reference beats in the steady section: {reference.Count}");
-
-            List<double> measured = beats.Where(b => b >= timing[0].Time && b <= steady_until_ms).ToList();
-
-            TestContext.Out.WriteLine($"{measured.Count} tracked beats in the same span; "
-                                      + $"{measured.Count / (steady_until_ms / timing[0].BeatLength):0.00} of the map's beats");
-
-            List<double> errors = measured.Select(b => nearest(reference, b)).Select(r => r.Error).ToList();
-            List<double> absolute = errors.Select(Math.Abs).OrderBy(e => e).ToList();
+            TestContext.Out.WriteLine($"timing points: {timing.Count}; the grid is {grid.Length} beats over "
+                                      + $"{grid[^1] / 1000:0.#}s");
+            TestContext.Out.WriteLine($"the model's own beats: {raw.Count}, after the regulariser: {regularised.Count}");
 
             TestContext.Out.WriteLine("");
-            TestContext.Out.WriteLine("tracked beats against the map's own grid, in the steady section:");
-            TestContext.Out.WriteLine($"  median   {absolute[absolute.Count / 2],7:0.0}ms");
-            TestContext.Out.WriteLine($"  90th     {absolute[(int)(absolute.Count * 0.9)],7:0.0}ms");
-            TestContext.Out.WriteLine($"  worst    {absolute[^1],7:0.0}ms");
-            TestContext.Out.WriteLine($"  within 30ms  {absolute.Count(a => a <= 30) * 100.0 / absolute.Count,5:0.0}%");
-            TestContext.Out.WriteLine($"  within 60ms  {absolute.Count(a => a <= 60) * 100.0 / absolute.Count,5:0.0}%");
-            TestContext.Out.WriteLine($"  beyond 60ms  {absolute.Count(a => a > 60) * 100.0 / absolute.Count,5:0.0}%");
+            TestContext.Out.WriteLine("how far each tracked beat is from the beatmap's grid, and how many of the");
+            TestContext.Out.WriteLine("beatmap's beats have a tracked beat near them - the second is what a listener sees");
 
-            (double raw, double smoothed, int compared) = heldOutPrediction(measured);
+            score("the model's own beats", raw, grid);
+            score("after the regulariser", regularised, grid);
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the same, per section, because the failure is local and the sections differ:");
+
+            foreach ((double from, double to) in new[]
+                     {
+                         (0.0, 82_000.0), (82_000.0, 90_000.0), (90_000.0, 110_000.0), (110_000.0, 140_000.0),
+                         (140_000.0, 178_000.0),
+                     })
+            {
+                string name = describeSection(timing, from, to);
+                double[] sectionGrid = within(grid, from, to);
+
+                TestContext.Out.WriteLine($"");
+                TestContext.Out.WriteLine($"  {from / 1000:0}s to {to / 1000:0}s - {name}");
+                TestContext.Out.WriteLine($"      the map has {sectionGrid.Length} beats in this section");
+
+                // The two populations are not subsets of each other: the regulariser invents beats where it believes
+                // some are missing and drops beats it believes are subdivisions, so neither count says anything about
+                // the other. Both are measured against the same section of the map.
+                score("    model", slice(raw, from, to), sectionGrid);
+                score("    regularised", slice(regularised, from, to), sectionGrid);
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the model's beats against the map's, over twelve seconds of a ramp where the");
+            TestContext.Out.WriteLine("tempo climbs: the shape of the error decides what can be done about it");
+            dump(raw, grid, 110_000, 122_000);
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("and what the model believes at each of the map's own beats in that ramp, against");
+            TestContext.Out.WriteLine("what it believes at the beats it chose: if there is a peak where the music's beat");
+            TestContext.Out.WriteLine("is, the beats are there to be picked and the picking is what is wrong");
+            activation(modelPath, audio, grid, 110_000, 120_000);
+
+            (double rawPrediction, double smoothed, int compared) = heldOutPrediction(slice(raw, 0, steady_until_ms));
 
             TestContext.Out.WriteLine("");
             TestContext.Out.WriteLine("predicting each beat from the ones before it, in the steady section:");
-            TestContext.Out.WriteLine($"  the tracker's own gaps  {raw,7:0.0}ms median error");
+            TestContext.Out.WriteLine($"  the tracker's own gaps  {rawPrediction,7:0.0}ms median error");
             TestContext.Out.WriteLine($"  a fitted pulse          {smoothed,7:0.0}ms median error");
             TestContext.Out.WriteLine($"  over {compared} held-out beats");
-            TestContext.Out.WriteLine(smoothed < raw
-                ? "  -> the pulse is there to be found, and finding it would place beats better"
-                : "  -> fitting a pulse does not predict the next beat better; the tracker is not jittering around one");
-
-            // The measurement above says most beats are close and a few are far out, which is a tail rather than a
-            // jitter. If that is right, the thing to try is not moving every beat onto a pulse but moving the beats
-            // that are nowhere near one - so these are the same population measured after each of those passes.
-            TestContext.Out.WriteLine("");
-            TestContext.Out.WriteLine("the same tracked beats after a pass that only moves the ones far from the pulse:");
-
-            foreach (double tolerance in new[] { 0.5, 0.35, 0.25, 0.15 })
-            {
-                List<double> snapped = snapOutliers(measured, tolerance);
-                List<double> after = snapped.Select(b => nearest(reference, b)).Select(r => Math.Abs(r.Error)).OrderBy(e => e).ToList();
-
-                TestContext.Out.WriteLine($"  beyond {tolerance * 100,3:0}% of a beat moved:  median {after[after.Count / 2],6:0.0}ms   "
-                                          + $"90th {after[(int)(after.Count * 0.9)],6:0.0}ms   within 30ms {after.Count(a => a <= 30) * 100.0 / after.Count,5:0.0}%   "
-                                          + $"beyond 60ms {after.Count(a => a > 60) * 100.0 / after.Count,5:0.0}%");
-            }
-
-            List<double> everything = snapOutliers(measured, 0);
-            List<double> allAfter = everything.Select(b => nearest(reference, b)).Select(r => Math.Abs(r.Error)).OrderBy(e => e).ToList();
-
-            TestContext.Out.WriteLine($"  every beat moved:              median {allAfter[allAfter.Count / 2],6:0.0}ms   "
-                                      + $"90th {allAfter[(int)(allAfter.Count * 0.9)],6:0.0}ms   within 30ms {allAfter.Count(a => a <= 30) * 100.0 / allAfter.Count,5:0.0}%   "
-                                      + $"beyond 60ms {allAfter.Count(a => a > 60) * 100.0 / allAfter.Count,5:0.0}%");
         }
 
         /// <summary>
-        /// Moves only the beats that are nowhere near the pulse around them, and leaves the rest alone.
+        /// Two sequences side by side over a window, with each tracked beat's distance from the nearest map beat.
         /// </summary>
         /// <remarks>
-        /// The pulse and its phase come from the beats either side, by least squares over a window - and a beat being
-        /// moved is left out of the fit that moves it, so a misplaced beat cannot drag the pulse towards itself.
-        ///
-        /// The tolerance is a share of a beat: a beat less than that far from where the pulse says it should be is
-        /// taken to be the tracker being precise, and a beat further than that is taken to be the tracker being wrong
-        /// about where the beat is. At zero every beat moves, which is the smoothing pass the measurement says would
-        /// throw away the two thirds of beats that are already within 30ms.
+        /// A table like this is what says which of the two failures it is. If every tracked beat sits the same distance
+        /// from the map's, the tracker has the tempo and the wrong phase; if the distance grows and shrinks again, it
+        /// has the phase and the wrong tempo; and if the gaps between tracked beats are not the gaps between the map's,
+        /// it is pulsing at some other level entirely.
         /// </remarks>
-        private static List<double> snapOutliers(List<double> beats, double tolerance)
+        private static void dump(List<double> beats, double[] grid, double from, double to)
         {
-            const int window = 10;
-
-            var result = new List<double>(beats);
-
-            // The local beat period: the median gap over a wide window, which a single misplaced beat cannot move.
-            for (int i = window; i < beats.Count - window; i++)
+            foreach (double beat in beats.Where(b => b >= from && b < to))
             {
-                var gaps = new List<double>();
+                double distance = signedDistance(grid, beat);
 
-                for (int j = i - window; j < i + window; j++)
-                    gaps.Add(beats[j + 1] - beats[j]);
+                TestContext.Out.WriteLine($"    {beat,9:0}ms   map {beat + distance,9:0}ms   off by {distance,7:+0;-0;0}ms");
+            }
+        }
 
-                gaps.Sort();
+        /// <summary>
+        /// The model's own belief, frame by frame, at the map's beats and at the beats the model chose.
+        /// </summary>
+        /// <remarks>
+        /// The distinction that decides everything about how to fix this. If the model is confident at the place the
+        /// music's beat is, then the beats are visible to it and the peak picking is what is losing them - which is a
+        /// problem with a known shape and a known answer. If it is confident somewhere else, no amount of picking
+        /// recovers a beat the model does not believe in, and the answer is elsewhere.
+        /// </remarks>
+        private static void activation(string modelPath, string audio, double[] grid, double from, double to)
+        {
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] beats, float[] downbeats) = BeatThisBeatTracker.Logits(BeatThisBeatTracker.LogMelSpectrogram(samples), modelPath);
 
-                double period = gaps[gaps.Count / 2];
+            double atMap = 0;
+            int mapCount = 0;
 
-                if (period <= 0)
-                    continue;
-
-                // A line through the beats either side, excluding the one being placed.
-                var neighbours = new List<double>();
-
-                for (int j = i - window; j <= i + window; j++)
-                {
-                    if (j != i)
-                        neighbours.Add(beats[j]);
-                }
-
-                double slope = 0;
-                double intercept = 0;
-
-                leastSquares(neighbours.ToArray(), out slope, out intercept);
-
-                // The line is in beat numbers; this beat's number within its own window is i - (i - window) = window.
-                double expected = intercept + (slope * window);
-
-                if (Math.Abs(beats[i] - expected) > tolerance * period)
-                    result[i] = expected;
+            foreach (double beat in grid.Where(b => b >= from && b < to))
+            {
+                atMap += value(beats, beat);
+                mapCount++;
             }
 
-            return result;
+            TestContext.Out.WriteLine($"    at the map's {mapCount} beats: mean beat activation {atMap / mapCount:0.000}");
+
+            // The same span, and the model's own choice of beat in it, which is what the peak picking produced.
+            var chosen = new List<double>();
+
+            for (double time = from; time < to; time += 10)
+            {
+                double best = 0;
+
+                for (int frame = -3; frame <= 3; frame++)
+                {
+                    // A beat is a local maximum of the activation; taking the best of a small neighbourhood is what
+                    // the peak picking does, and it is the fair comparison to the activation at the map's beat.
+                    best = Math.Max(best, beats[Math.Clamp(frameIndex(time, beats.Length) + frame, 0, beats.Length - 1)]);
+                }
+
+                chosen.Add(best);
+            }
+
+            TestContext.Out.WriteLine($"    the best activation anywhere in the same span: {chosen.Max():0.000}");
+
+            // The whole-track picture, so that the ramp can be compared with a passage that is known to work.
+            double mean = 0;
+
+            foreach (float logit in beats)
+                mean += logit;
+
+            TestContext.Out.WriteLine($"    mean activation over the whole track: {mean / beats.Length:0.000}");
+        }
+
+        private static int frameIndex(double milliseconds, int length)
+        {
+            int frame = (int)Math.Round(milliseconds / BeatThisBeatTracker.FrameToMilliseconds(1));
+
+            return Math.Clamp(frame, 0, length - 1);
+        }
+
+        private static double value(float[] logits, double milliseconds)
+        {
+            int frame = frameIndex(milliseconds, logits.Length);
+
+            double best = 0;
+
+            for (int offset = -2; offset <= 2; offset++)
+                best = Math.Max(best, logits[Math.Clamp(frame + offset, 0, logits.Length - 1)]);
+
+            return best;
+        }
+
+        /// <summary>
+        /// How well a set of tracked beats matches the map's own grid, both ways round.
+        /// </summary>
+        /// <remarks>
+        /// Both directions, because they are different failures. How far a tracked beat is from the grid is the
+        /// precision of the pulses the player draws; how many of the map's beats have a tracked beat within 60ms is
+        /// whether a beat of the music goes by with nothing happening, which is the one a listener notices.
+        /// </remarks>
+        private static void score(string name, List<double> beats, double[] grid)
+        {
+            if (beats.Count == 0)
+            {
+                TestContext.Out.WriteLine($"  {name}: nothing");
+                return;
+            }
+
+            var errors = beats.Select(b => Math.Abs(signedDistance(grid, b))).OrderBy(e => e).ToArray();
+
+            int covered = grid.Count(g => beats.Any(b => Math.Abs(b - g) <= 60));
+
+            TestContext.Out.WriteLine($"  {name,-26} n={beats.Count,4}  median {errors[errors.Length / 2],6:0.0}ms  "
+                                      + $"p90 {errors[(int)(errors.Length * 0.9)],6:0.0}ms  "
+                                      + $"within 60ms {covered * 100.0 / grid.Length,5:0.0}% of the map's beats");
+        }
+
+        private static string describeSection(List<TimingPoint> timing, double from, double to)
+        {
+            var inSection = timing.Where(p => p.Time > from && p.Time < to).ToList();
+
+            if (inSection.Count == 0)
+                return $"{60000 / tempoAt(timing, (from + to) / 2):0} BPM held";
+
+            return $"{inSection.Count} tempo change(s), {60000 / tempoAt(timing, from + 1):0} to "
+                   + $"{60000 / tempoAt(timing, to - 1):0} BPM";
+        }
+
+        private static double tempoAt(List<TimingPoint> timing, double time)
+        {
+            double length = 0;
+
+            foreach (TimingPoint point in timing)
+            {
+                if (point.Time <= time)
+                    length = point.BeatLength;
+                else
+                    break;
+            }
+
+            return length;
+        }
+
+        /// <summary>The map's own beats, from its own timing points.</summary>
+        private static double[] beatmapGrid(List<TimingPoint> timing)
+        {
+            var grid = new List<double>();
+
+            for (int i = 0; i < timing.Count; i++)
+            {
+                double until = i + 1 < timing.Count ? timing[i + 1].Time : timing[i].Time + 60_000;
+
+                for (double time = timing[i].Time; time < until && grid.Count < 500_000; time += timing[i].BeatLength)
+                    grid.Add(time);
+            }
+
+            grid.Sort();
+
+            return grid.ToArray();
+        }
+
+        /// <summary>The beats of one section, from either kind of sequence.</summary>
+        private static List<double> slice(IEnumerable<double> beats, double from, double to)
+            => beats.Where(b => b >= from && b < to).ToList();
+
+        private static double[] within(double[] beats, double from, double to)
+            => beats.Where(b => b >= from && b < to).ToArray();
+
+        /// <summary>How far a time is from the nearest line of a sorted grid, signed.</summary>
+        private static double signedDistance(double[] grid, double time)
+        {
+            int index = Array.BinarySearch(grid, time);
+
+            if (index >= 0)
+                return 0;
+
+            index = ~index;
+
+            if (index == 0)
+                return time - grid[0];
+
+            if (index >= grid.Length)
+                return time - grid[^1];
+
+            double before = time - grid[index - 1];
+            double after = time - grid[index];
+
+            return Math.Abs(before) <= Math.Abs(after) ? before : after;
         }
 
         /// <summary>
@@ -271,7 +399,8 @@ namespace ParaTactus.Tests
             return (reference[best], at - reference[best]);
         }
 
-        private static List<double> analyse(string audio, string modelPath)
+        /// <summary>The model's beats, optionally through the regulariser.</summary>
+        private static List<double> analyse(string audio, string modelPath, bool regularise)
         {
             string cache = Path.Combine(Path.GetTempPath(), "paratactus-placement-probe");
             var provider = new BeatGridProvider(modelPath, cache, BassAudioDecoder.Default);
@@ -280,10 +409,14 @@ namespace ParaTactus.Tests
             BeatGrid grid = provider.Get(audio);
             watch.Stop();
 
-            TestContext.Out.WriteLine($"analysed in {watch.Elapsed.TotalSeconds:0.#}s "
-                                      + $"({grid.Beats.Count} beats, {grid.BpmAt(0):0.#} BPM at the start)");
+            double[] beats = regularise
+                ? BeatTrainRegulariser.Regularise(BeatThisBeatTracker.BeatTimes(audio, modelPath, BassAudioDecoder.Default))
+                : BeatThisBeatTracker.BeatTimes(audio, modelPath, BassAudioDecoder.Default);
 
-            return grid.Beats.ToList();
+            TestContext.Out.WriteLine($"analysed in {watch.Elapsed.TotalSeconds:0.#}s "
+                                      + $"({grid.Beats.Count} beats in the grid, {grid.BpmAt(0):0.#} BPM at the start)");
+
+            return beats.ToList();
         }
 
         /// <summary>The beatmap's own tempo declarations, as committed beside this test.</summary>
