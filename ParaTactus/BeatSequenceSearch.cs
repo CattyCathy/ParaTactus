@@ -53,8 +53,30 @@ namespace ParaTactus
         /// does; too large and the tempo is effectively frozen, so a track that accelerates is tracked at one tempo and
         /// the beats pile up at one end of the passage. The default was chosen by measuring both ends of that trade
         /// against the reference beatmap; see <c>BeatSequenceSearchProbe</c>.
+        ///
+        /// This decides whether the path follows a tempo change. It does not decide how many beats the path has: a
+        /// steady path pays nothing whatever its interval, so every extra beat it can land on a positive frame is
+        /// free, and raising this from 6 to 40 leaves the count where it was to within a twentieth. What decides the
+        /// count is <see cref="DefaultFloor"/>.
         /// </remarks>
         public const double DefaultTempoRigidity = 12;
+
+        /// <summary>
+        /// How strong the model has to believe in a frame before a beat can be placed on it, in logits above the mean.
+        /// </summary>
+        /// <remarks>
+        /// The one number that decides how many beats the search finds, and it is not a matter of taste. Centring the
+        /// reward on the track's own mean puts the bar at zero reward, and the mean of a beat model's output is dragged
+        /// a long way down by the frames between beats: on Frums' XNOR the model reads +0.933 at the beatmap's own
+        /// beats against a whole-track mean of -1.789. So the bar for a beat sits at -1.789 while the beats are at
+        /// +0.933, and every frame that is merely above the mean - which is to say, a large share of the frames
+        /// anywhere near a note - clears it. The search then places a beat on each of them, because a path is scored by
+        /// the sum of its own rewards and a steady path pays nothing for the extra beats it takes.
+        ///
+        /// This raises that bar. A frame has to beat the mean by this much before it can carry a beat, so the frames
+        /// that can are the ones the model is actually sure about. At zero the behaviour is the old one exactly.
+        /// </remarks>
+        public const double DefaultFloor = 0;
 
         /// <summary>
         /// The beats this activation implies, in frames.
@@ -62,7 +84,8 @@ namespace ParaTactus
         /// <param name="beats">The model's beat head, one value per frame.</param>
         /// <param name="downbeats">The model's downbeat head, the same length.</param>
         /// <param name="rigidity">How much a tempo change costs. See <see cref="DefaultTempoRigidity"/>.</param>
-        public static int[] Frames(float[] beats, float[] downbeats, double rigidity = DefaultTempoRigidity)
+        /// <param name="floor">How sure the model has to be. See <see cref="DefaultFloor"/>.</param>
+        public static int[] Frames(float[] beats, float[] downbeats, double rigidity = DefaultTempoRigidity, double floor = DefaultFloor)
         {
             if (beats == null)
                 throw new ArgumentNullException(nameof(beats));
@@ -75,8 +98,10 @@ namespace ParaTactus
 
             // How much the model believes in a beat here, scale removed so that the tempo cost and the activation cost
             // are in the same units. The activations are logits and their spread depends on the model and the track, so
-            // a fixed scale would make the same rigidity mean different things on different material.
-            double[] reward = rewardFor(beats, downbeats);
+            // a fixed scale would make the same rigidity mean different things on different material. The floor is
+            // applied here rather than to the frames the path may use, because which frames clear it is exactly what
+            // the path is for: a frame below it can still be walked over, it just cannot be landed on for free.
+            double[] reward = rewardFor(beats, downbeats, floor);
 
             const double unreachable = double.NegativeInfinity;
 
@@ -186,13 +211,16 @@ namespace ParaTactus
         /// the model is unsure about is worth nothing rather than a little, and only frames it actively believes in
         /// pull the path towards themselves.
         ///
+        /// The centring is only as good as the mean it subtracts, and the mean of a beat model's output is not where
+        /// its beats are - see <see cref="DefaultFloor"/>. That is what the floor raises.
+        ///
         /// The downbeat head is folded in at a share of its weight rather than as a second dimension. Downbeats are
         /// where the bar starts, which is information about the metre and not about where a beat is; using them to
         /// choose the beat times directly would make every bar start a candidate beat and every other beat a weaker
         /// one. What they are good for here is tie-breaking between two peaks the beat head likes equally, which is
         /// what a small share does.
         /// </remarks>
-        private static double[] rewardFor(float[] beats, float[] downbeats)
+        private static double[] rewardFor(float[] beats, float[] downbeats, double floor)
         {
             var reward = new double[beats.Length];
 
@@ -207,7 +235,7 @@ namespace ParaTactus
             {
                 double downbeat = downbeats != null && i < downbeats.Length ? downbeats[i] : 0;
 
-                reward[i] = (beats[i] - mean) + (0.15 * downbeat);
+                reward[i] = (beats[i] - mean - floor) + (0.15 * downbeat);
             }
 
             return reward;

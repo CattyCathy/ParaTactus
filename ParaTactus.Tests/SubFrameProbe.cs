@@ -150,6 +150,42 @@ namespace ParaTactus.Tests
 
                 TestContext.Out.WriteLine($"  {minute,3}:00  {signed.Length,10}  {middle,12:+0;-0;0}ms  {spread,9:0}ms");
             }
+
+            // The search finds more beats than the peaks on every track measured so far - 2315 against 1539 here - and
+            // it is not the tempo rigidity that decides that. A steady path pays nothing whatever its interval, so
+            // every extra beat it can land on a positive frame is free, and rigidity only prices a change of tempo.
+            // Sweeping it from 6 to 40 moves the count by a twentieth and the scatter not at all.
+            //
+            // What decides it is the bar a frame has to clear to carry a beat. The reward is centred on the track's own
+            // mean, and the mean of a beat model's output sits far below its beats, so the bar is met by a large share
+            // of the frames anywhere near a note. The floor raises it. Read down for the floor at which the pulses
+            // stop coming twice as often as the map's beats without the distance getting worse; if there is no such
+            // row, the peaks are where the beats are and the search is not the instrument for them.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the search at a range of floors, at the default rigidity:");
+            TestContext.Out.WriteLine("  reading                                              count   rate   median      p90  covered   settled  scatter");
+
+            foreach (double floor in new[] { 0.0, 0.5, 1.0, 1.5, 2.0, 3.0 })
+            {
+                double[] atFloor = BeatSequenceSearch.Frames(activations, null, BeatSequenceSearch.DefaultTempoRigidity, floor)
+                                                     .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                     .ToArray();
+
+                report($"the search with a floor of {floor:0.0}", atFloor, grid);
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("and the same floors with the rigidity raised, in case the two interact:");
+            TestContext.Out.WriteLine("  reading                                              count   rate   median      p90  covered   settled  scatter");
+
+            foreach (double floor in new[] { 1.0, 1.5, 2.0 })
+            {
+                double[] both = BeatSequenceSearch.Frames(activations, null, 32, floor)
+                                                  .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                  .ToArray();
+
+                report($"rigidity 32, floor {floor:0.0}", both, grid);
+            }
         }
 
         /// <summary>
@@ -320,6 +356,149 @@ namespace ParaTactus.Tests
 
             foreach (float sample in samples)
                 writer.Write((short)Math.Clamp(sample * short.MaxValue, short.MinValue, short.MaxValue));
+        }
+
+        /// <summary>
+        /// The lag at which the model's activation lines up with the audio's own onsets.
+        /// </summary>
+        /// <remarks>
+        /// The reading in this probe that does not trust the beatmap at all. Everything else here is a distance from a
+        /// map's own timing points, which assumes the map is right both about where the music's beats are and about
+        /// where the audio file starts - and a map can be wrong about the second by tens of milliseconds without anyone
+        /// noticing, because the offset is stored in the map and the map is what a player's hit timing is judged
+        /// against. A tracker that places beats thirty milliseconds early against a map that places them thirty
+        /// milliseconds late is right about the music and would still read as thirty milliseconds out here.
+        ///
+        /// The spectral flux is computed on the same grid as the model - the same rate, the same hop, the same
+        /// half-window centring - so a frame means the same instant in both, and the lag that best lines them up is
+        /// the model's own displacement from the audio it was given.
+        ///
+        /// Read it as: a lag of zero means the model is where the sound is; a lag of minus one frame means the model
+        /// reports each beat one frame - twenty milliseconds - before the sound that caused it, which is a frontend
+        /// delay and not a disagreement about the beat.
+        /// </remarks>
+        [Test]
+        public void MeasureTheModelsLagAgainstTheAudioItself()
+        {
+            string corpus = Environment.GetEnvironmentVariable("OSUTEST_CORPUS");
+
+            if (string.IsNullOrEmpty(corpus) || !Directory.Exists(corpus))
+                Assert.Ignore("Set OSUTEST_CORPUS to a folder holding .osu files and their audio.");
+
+            string modelPath = Environment.GetEnvironmentVariable("OSUTEST_MODEL")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", $"{defaultModel}.onnx");
+
+            if (!File.Exists(modelPath))
+                Assert.Ignore($"no model at {modelPath}");
+
+            string wanted = Environment.GetEnvironmentVariable("OSUTEST_MAP");
+            string map = Directory.EnumerateFiles(corpus, "*.osu", SearchOption.AllDirectories)
+                                  .FirstOrDefault(f => wanted == null
+                                                       || Path.GetFileName(f).Contains(wanted, StringComparison.OrdinalIgnoreCase));
+
+            if (map == null)
+                Assert.Ignore($"no .osu file in {corpus} matching {wanted}");
+
+            string folder = Path.GetDirectoryName(map);
+            string audio = folder == null ? null : audioFor(map, folder);
+
+            if (audio == null)
+                Assert.Ignore($"no audio beside {map}");
+
+            TestContext.Out.WriteLine($"beatmap: {Path.GetFileName(map)}");
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
+
+            double[] flux = OnsetEnvelope.FromSamples(samples, out int frameCount);
+
+            TestContext.Out.WriteLine($"  {activations.Length} activation frames, {flux.Length} onset frames");
+
+            // Both are treated as zero-mean and unit-variance so a lag is a correlation rather than whichever series
+            // happens to have the larger numbers in it. The onset envelope is normalised to a mean of one and a beat
+            // model's output is logits; neither is on the other's scale.
+            // Both series repeat at the beat rate, so their correlation does too, and searching far enough in either
+            // direction finds a second peak at one beat's displacement that is as tall as the first. A search wide
+            // enough to reach it reports whichever of the two is a fraction larger, which is a phase the music does not
+            // have - the first version of this searched twenty-five frames either way, found minus twenty-three, and
+            // reported the model as half a second early. The window is therefore kept inside half a beat of the
+            // fastest tempo in the corpus, which is the widest a displacement can be without being a different beat.
+            double period = 60000 / 375;
+            int limit = Math.Max(2, (int)Math.Floor(period / 2 / (1000.0 / BeatThisBeatTracker.FramesPerSecond)));
+
+            TestContext.Out.WriteLine($"searching {limit} frames either way, which is half a beat at 375 BPM");
+
+            double best = double.NegativeInfinity;
+            int bestLag = 0;
+            var scores = new List<(int Lag, double Score)>();
+
+            for (int lag = -limit; lag <= limit; lag++)
+            {
+                double score = correlate(activations, flux, lag);
+
+                scores.Add((lag, score));
+
+                if (score > best)
+                {
+                    best = score;
+                    bestLag = lag;
+                }
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("correlation of the model's beat head with the audio's onset strength:");
+            TestContext.Out.WriteLine("  lag      correlation");
+
+            foreach ((int lag, double score) in scores)
+                TestContext.Out.WriteLine($"  {lag,3}  {score,14:+0.0000;-0.0000; 0.0000}");
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine($"the best lag is {bestLag} frames, or {bestLag * 1000.0 / BeatThisBeatTracker.FramesPerSecond:+0;-0;0}ms");
+            TestContext.Out.WriteLine(bestLag == 0
+                ? "the model is where the sound is."
+                : bestLag < 0
+                    ? "the model reports each beat before the sound that caused it, which is a delay in the frontend."
+                    : "the model reports each beat after the sound that caused it.");
+        }
+
+        /// <summary>Zero-mean unit-variance correlation of two series at a lag, over the frames they share.</summary>
+        private static double correlate(float[] beats, double[] flux, int lag)
+        {
+            int first = Math.Max(0, -lag);
+            int last = Math.Min(beats.Length, flux.Length - lag);
+
+            if (last - first < 100)
+                return double.NegativeInfinity;
+
+            double sumA = 0;
+            double sumB = 0;
+
+            for (int i = first; i < last; i++)
+            {
+                sumA += beats[i];
+                sumB += flux[i + lag];
+            }
+
+            double meanA = sumA / (last - first);
+            double meanB = sumB / (last - first);
+
+            double covariance = 0;
+            double varianceA = 0;
+            double varianceB = 0;
+
+            for (int i = first; i < last; i++)
+            {
+                double a = beats[i] - meanA;
+                double b = flux[i + lag] - meanB;
+
+                covariance += a * b;
+                varianceA += a * a;
+                varianceB += b * b;
+            }
+
+            double denominator = Math.Sqrt(varianceA * varianceB);
+
+            return denominator < 1e-9 ? 0 : covariance / denominator;
         }
 
         private static void report(string name, double[] beats, double[] grid)
