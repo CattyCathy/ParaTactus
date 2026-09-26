@@ -64,6 +64,57 @@ namespace ParaTactus.Tests
         }
 
         [Test]
+        public void ThePublicFrontendAgreesWithTheTracker()
+        {
+            string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");
+
+            if (string.IsNullOrEmpty(audio) || !File.Exists(audio))
+                Assert.Ignore("Set OSUTEST_AUDIO to an audio file.");
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+
+            float[,] reference = BeatThisBeatTracker.LogMelSpectrogram(samples);
+            float[,] mine = LogMel.Spectrogram(samples);
+
+            TestContext.Out.WriteLine($"reference {reference.GetLength(0)} x {reference.GetLength(1)}");
+            TestContext.Out.WriteLine($"public    {mine.GetLength(0)} x {mine.GetLength(1)}");
+
+            Assert.That(mine.GetLength(0), Is.EqualTo(reference.GetLength(0)), "frame counts differ");
+            Assert.That(mine.GetLength(1), Is.EqualTo(reference.GetLength(1)), "bin counts differ");
+
+            double worst = 0;
+            double total = 0;
+            int worstFrame = 0;
+            int worstBin = 0;
+
+            for (int t = 0; t < reference.GetLength(0); t++)
+            {
+                for (int m = 0; m < reference.GetLength(1); m++)
+                {
+                    double difference = Math.Abs(mine[t, m] - reference[t, m]);
+
+                    total += difference;
+
+                    if (difference > worst)
+                    {
+                        worst = difference;
+                        worstFrame = t;
+                        worstBin = m;
+                    }
+                }
+            }
+
+            int cells = reference.GetLength(0) * reference.GetLength(1);
+
+            TestContext.Out.WriteLine($"worst difference {worst:e3} at frame {worstFrame}, bin {worstBin}");
+            TestContext.Out.WriteLine($"mean difference  {total / cells:e3}");
+
+            // The detector is trained on Python's version of this frontend and run against this one, so the two have to
+            // agree to within float noise. A tolerance that a real difference could hide under is not a test.
+            Assert.That(worst, Is.LessThan(1e-4), "the public frontend and the tracker's disagree");
+        }
+
+        [Test]
         public void WriteTheFrontendsOutput()
         {
             string audio = Environment.GetEnvironmentVariable("OSUTEST_AUDIO");

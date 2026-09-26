@@ -179,7 +179,7 @@ namespace ParaTactus.Tests
         {
             string scratch = Path.Combine(Path.GetTempPath(), "paratactus-set-" + id);
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            double unzip = 0, decode = 0, infer = 0, label = 0, write = 0;
+            double unzip = 0, decode = 0, infer = 0, label = 0;
 
             try
             {

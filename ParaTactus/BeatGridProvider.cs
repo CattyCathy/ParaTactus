@@ -64,6 +64,22 @@ namespace ParaTactus
         /// </remarks>
         public bool SearchForBeats { get; set; }
 
+        /// <summary>
+        /// A path to a trained <see cref="LearnedBeatDetector"/> model, to read the beats with that instead.
+        /// </summary>
+        /// <remarks>
+        /// Empty by default, and empty means the beats come from Beat This! and the post-processing as they always have.
+        /// The detector is a different instrument rather than a better one for every case: it was trained on this
+        /// project's own corpus of beatmaps and reads a log-mel spectrogram directly, and it reports the beat period
+        /// alongside the beats, which is what lets it hold a metrical level.
+        ///
+        /// Measured on twelve tracks against their maps' timing points, it places beats a median 12ms from the map's
+        /// own against 101ms for the peak picking over the activation, and lands on the map's metrical level on seven of
+        /// the twelve. It is also slower and needs a second model file, which is why switching it on is a decision and
+        /// not a default.
+        /// </remarks>
+        public string DetectorPath { get; set; }
+
         /// <summary>Where analysed grids are kept.</summary>
         public BeatGridCache Cache { get; }
 
@@ -86,8 +102,8 @@ namespace ParaTactus
         /// thread the inference never finishes. Measured on the reference track, the same sequence on a below-normal
         /// thread spun at full CPU for minutes where the identical code at normal priority returned in 19 seconds.
         /// What actually protects playback is keeping processors out of the model's own pool, two of them, which
-        /// <see cref="BeatThisBeatTracker.OpenSession"/> does without starving the inference it is protecting playback
-        /// from.
+        /// <see cref="BeatThisBeatTracker.OpenSession(string)"/> does without starving the inference it is protecting
+        /// playback from.
         /// </remarks>
         public BeatGrid Get(string audioPath, CancellationToken cancellation = default)
         {
@@ -123,21 +139,40 @@ namespace ParaTactus
                             + "feed it to a StreamingBeatTracker.");
                     }
 
-                    tracker.Add(decoder.DecodeMono(audioPath, AnalysisAudio.SampleRate));
-                    tracker.Flush();
+                    float[] samples = decoder.DecodeMono(audioPath, AnalysisAudio.SampleRate);
 
-                    // The tracked beats are put onto a locally regular spacing before they become a grid. The model's
-                    // tempo is right and its individual beats are not: on one track's 200 BPM section the gaps it
-                    // reports run from 200ms to 620ms around a 300ms beat, firing on subdivisions in places and
-                    // missing beats in others. A display driven straight from that pulses unevenly through music a
-                    // listener hears as steady, which is the one thing the visuals must not do.
-                    //
-                    // The search is an alternative to that, not a second stage after it: it chooses the beats from the
-                    // activation with the tempo in its state, and re-spacing what it chose would throw away the
-                    // steadiness it just paid for.
-                    grid = SearchForBeats
-                        ? BeatGrid.FromBeats(tracker.SearchedBeats)
-                        : BeatGrid.FromBeats(BeatTrainRegulariser.Regularise(tracker.Beats));
+                    if (!string.IsNullOrEmpty(DetectorPath))
+                    {
+                        // The detector reads the audio itself rather than anything Beat This! produced, so the tracker
+                        // is not run at all in this branch: two models over the same track would be twice the cost for
+                        // one answer, and the answer would be the detector's either way.
+                        //
+                        // FromNormalisedBeats rather than FromBeats, and that is the point of the detector. FromBeats
+                        // decides a metrical level for the whole track and moves every beat onto it; the detector has
+                        // already decided its level from the audio with a period head trained for it, and re-deciding
+                        // here would undo the thing it was built for.
+                        using var detector = new LearnedBeatDetector(DetectorPath);
+
+                        grid = BeatGrid.FromNormalisedBeats(detector.Beats(samples), 0);
+                    }
+                    else
+                    {
+                        tracker.Add(samples);
+                        tracker.Flush();
+
+                        // The tracked beats are put onto a locally regular spacing before they become a grid. The model's
+                        // tempo is right and its individual beats are not: on one track's 200 BPM section the gaps it
+                        // reports run from 200ms to 620ms around a 300ms beat, firing on subdivisions in places and
+                        // missing beats in others. A display driven straight from that pulses unevenly through music a
+                        // listener hears as steady, which is the one thing the visuals must not do.
+                        //
+                        // The search is an alternative to that, not a second stage after it: it chooses the beats from the
+                        // activation with the tempo in its state, and re-spacing what it chose would throw away the
+                        // steadiness it just paid for.
+                        grid = SearchForBeats
+                            ? BeatGrid.FromBeats(tracker.SearchedBeats)
+                            : BeatGrid.FromBeats(BeatTrainRegulariser.Regularise(tracker.Beats));
+                    }
                 }
                 catch (Exception error)
                 {
