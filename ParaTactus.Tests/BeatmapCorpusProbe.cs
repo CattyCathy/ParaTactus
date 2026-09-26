@@ -186,7 +186,10 @@ namespace ParaTactus.Tests
         {
             List<TimingPoint> timing = timingPoints(entry.Map);
 
-            Assert.That(timing.Count, Is.GreaterThan(1), $"{entry.Name} declares no tempo");
+            // One point is a whole track at one tempo, which is the ordinary case and not a missing tempo. The first
+            // version of this demanded more than one and so threw away every single-tempo beatmap in the folder -
+            // five of the eight - with a message that read as though the map were at fault.
+            Assert.That(timing.Count, Is.GreaterThanOrEqualTo(1), $"{entry.Name} declares no tempo at all");
 
             double[] grid = beatmapGrid(timing);
 
