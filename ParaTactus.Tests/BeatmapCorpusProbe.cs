@@ -103,6 +103,19 @@ namespace ParaTactus.Tests
             TestContext.Out.WriteLine($"covered more of the map's beats with the search: {better} of {results.Count}; "
                                       + $"with the peaks: {worse}; "
                                       + $"about the same: {results.Count - better - worse}");
+
+            // What the two readings would look like on screen, which is not what the table above measures. The search
+            // finds more beats on every track; whether that is the same music described more finely or just more
+            // pulses is the difference between the intervals having halved and the intervals having gone ragged, and
+            // only the distribution can tell those apart.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("how many pulses a second each reading would put on screen, and how steady they are:");
+            TestContext.Out.WriteLine($"  {"beatmap",-34} {"peaks",26} {"search",26}");
+
+            foreach (Result result in results.OrderByDescending(r => r.TempoSpread))
+            {
+                TestContext.Out.WriteLine($"  {Trim(result.Name),-34} {result.PeaksRateCell(),26} {result.SearchRateCell(),26}");
+            }
         }
 
         /// <summary>One beatmap and the audio beside it.</summary>
@@ -191,8 +204,6 @@ namespace ParaTactus.Tests
             // five of the eight - with a message that read as though the map were at fault.
             Assert.That(timing.Count, Is.GreaterThanOrEqualTo(1), $"{entry.Name} declares no tempo at all");
 
-            double[] grid = beatmapGrid(timing);
-
             float[] samples = BassAudioDecoder.DecodeMono(entry.Audio, AnalysisAudio.SampleRate);
             (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
 
@@ -200,6 +211,15 @@ namespace ParaTactus.Tests
             double[] search = BeatSequenceSearch.Frames(activations, null)
                                                  .Select(frame => BeatThisBeatTracker.FrameToMilliseconds(frame))
                                                  .ToArray();
+
+            // The grid has to reach the end of the track, which is the track's own length and not a fixed amount past
+            // the last timing point. A map at one tempo declares it once, at its start, so a grid built sixty seconds
+            // past that point stops a fifth of the way into a three minute track - and then the beats after it have no
+            // line to be near and every distance measured against that grid is tens of seconds. Which is what the
+            // first version of this reported, and it read as the tracker being catastrophically wrong rather than the
+            // reference being absent.
+            double until = Math.Max(peaks.Length > 0 ? peaks[^1] : 0, search.Length > 0 ? search[^1] : 0);
+            double[] grid = beatmapGrid(timing, until);
 
             double low = 60000 / timing.Max(p => p.BeatLength);
             double high = 60000 / timing.Min(p => p.BeatLength);
@@ -213,6 +233,10 @@ namespace ParaTactus.Tests
                 Changes = timing.Count,
                 PeaksCount = peaks.Length,
                 SearchCount = search.Length,
+                PeaksInterval = medianInterval(peaks),
+                PeaksIntervalSpread = intervalSpread(peaks),
+                SearchInterval = medianInterval(search),
+                SearchIntervalSpread = intervalSpread(search),
                 PeaksMedian = median(peaks, grid),
                 PeaksP90 = percentile(peaks, grid, 0.9),
                 PeaksCoverage = coverage(peaks, grid),
@@ -231,6 +255,14 @@ namespace ParaTactus.Tests
             public int Changes;
             public int PeaksCount;
             public int SearchCount;
+
+            /// <summary>The middle gap between one chosen beat and the next, in milliseconds.</summary>
+            public double PeaksInterval;
+            public double SearchInterval;
+
+            /// <summary>How far the gaps scatter from that middle, in milliseconds.</summary>
+            public double PeaksIntervalSpread;
+            public double SearchIntervalSpread;
             public double PeaksMedian;
             public double PeaksP90;
             public double PeaksCoverage;
@@ -245,6 +277,55 @@ namespace ParaTactus.Tests
             public string PeaksCell() => $"{PeaksMedian,5:0}ms {PeaksCoverage,5:0}% {PeaksCount,5} beats";
 
             public string SearchCell() => $"{SearchMedian,5:0}ms {SearchCoverage,5:0}% {SearchCount,5} beats";
+
+            /// <summary>Pulses a second, and how much the gaps between them vary.</summary>
+            public string PeaksRateCell() => PeaksInterval > 0
+                ? $"{1000 / PeaksInterval,4:0.0}/s  gaps ±{PeaksIntervalSpread,4:0}ms"
+                : "n/a";
+
+            public string SearchRateCell() => SearchInterval > 0
+                ? $"{1000 / SearchInterval,4:0.0}/s  gaps ±{SearchIntervalSpread,4:0}ms"
+                : "n/a";
+        }
+
+        /// <summary>The middle gap between consecutive beats, in milliseconds.</summary>
+        private static double medianInterval(double[] beats)
+        {
+            if (beats.Length < 3)
+                return 0;
+
+            var gaps = new List<double>();
+
+            for (int i = 1; i < beats.Length; i++)
+                gaps.Add(beats[i] - beats[i - 1]);
+
+            gaps.Sort();
+
+            return gaps[gaps.Count / 2];
+        }
+
+        /// <summary>
+        /// How much the gaps scatter, as the middle absolute deviation from the middle gap.
+        /// </summary>
+        /// <remarks>
+        /// The number that separates "the same music described twice as finely" from "twice as many pulses, placed
+        /// unevenly". Halving every gap leaves this where it was; adding pulses between them moves it.
+        /// </remarks>
+        private static double intervalSpread(double[] beats)
+        {
+            double middle = medianInterval(beats);
+
+            if (middle <= 0 || beats.Length < 3)
+                return 0;
+
+            var gaps = new List<double>();
+
+            for (int i = 1; i < beats.Length; i++)
+                gaps.Add(Math.Abs(beats[i] - beats[i - 1] - middle));
+
+            gaps.Sort();
+
+            return gaps[gaps.Count / 2];
         }
 
         private static string Trim(string name) => name.Length <= 34 ? name : name.Substring(0, 33) + "…";
@@ -297,15 +378,16 @@ namespace ParaTactus.Tests
             return Math.Abs(before) <= Math.Abs(after) ? before : after;
         }
 
-        private static double[] beatmapGrid(List<TimingPoint> timing)
+        private static double[] beatmapGrid(List<TimingPoint> timing, double until)
         {
             var grid = new List<double>();
 
             for (int i = 0; i < timing.Count; i++)
             {
-                double until = i + 1 < timing.Count ? timing[i + 1].Time : timing[i].Time + 60_000;
+                // A section runs until the next timing point, and the last one runs to the end of the track.
+                double end = i + 1 < timing.Count ? timing[i + 1].Time : Math.Max(until, timing[i].Time);
 
-                for (double time = timing[i].Time; time < until && grid.Count < 500_000; time += timing[i].BeatLength)
+                for (double time = timing[i].Time; time < end && grid.Count < 500_000; time += timing[i].BeatLength)
                     grid.Add(time);
             }
 
@@ -324,6 +406,12 @@ namespace ParaTactus.Tests
             {
                 string line = raw.Trim();
 
+                // Sections end at the next section, and a section header is a line starting with a bracket. Getting
+                // this wrong is not a small mistake: `[HitObjects]` and the object lines under it do not start with a
+                // bracket, and an object line reads as `x,y,time,type,...` - which parses as a timing point with a
+                // time and a "beat length" without complaining. Hundreds of them become hundreds of tempo changes,
+                // the reference grid becomes nonsense, and every distance measured against it is a number in the
+                // millions. Which is exactly what the first version of this did.
                 if (line.StartsWith("[", StringComparison.Ordinal))
                 {
                     inTiming = line.Equals("[TimingPoints]", StringComparison.OrdinalIgnoreCase);
