@@ -104,6 +104,27 @@ namespace ParaTactus
         }
 
         /// <summary>
+        /// What the model believes, frame by frame, before anything has decided where the beats are.
+        /// </summary>
+        /// <remarks>
+        /// The two heads as they come out of the network, one value per frame at fifty frames per second. Peak picking
+        /// turns these into beat times and can lose beats doing it - the shape of the failure is a phase that drifts,
+        /// which is what a tempo that is not being tracked looks like - so anything that wants to choose the beats
+        /// itself, against a tempo as well as an activation, needs these rather than the picked times.
+        ///
+        /// The values are logits: positive is "a beat is here", negative is "no beat here", and the scale is not a
+        /// probability. They are comparable with each other and not with anything else, which is all a search over them
+        /// needs.
+        /// </remarks>
+        public static (float[] Beats, float[] Downbeats) Activations(float[] samples, string modelPath)
+        {
+            if (samples == null)
+                throw new ArgumentNullException(nameof(samples));
+
+            return Logits(LogMelSpectrogram(samples), modelPath);
+        }
+
+        /// <summary>
         /// Log-mel spectrogram of a waveform, shaped (frames, 128).
         /// </summary>
         internal static float[,] LogMelSpectrogram(float[] samples)

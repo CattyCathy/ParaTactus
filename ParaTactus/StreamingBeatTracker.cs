@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -60,6 +61,25 @@ namespace ParaTactus
 
         /// <summary>The beats found so far, in milliseconds from the start of the track.</summary>
         public IReadOnlyList<double> Beats => beats;
+
+        /// <summary>
+        /// The beats chosen by searching for the steadiest tempo, over the same activation.
+        /// </summary>
+        /// <remarks>
+        /// A second reading of the same evidence, not a replacement for <see cref="Beats"/>. Peak picking decides each
+        /// beat on its own merits with a local rule about gaps, so nothing in it can say "the tempo was 300ms a moment
+        /// ago and it cannot be 500ms now" - and on a track whose tempo moves that is the whole failure. The search
+        /// carries the interval as part of its state and pays for changing it, which is what stops a phase coming
+        /// adrift while the tempo is very nearly right.
+        ///
+        /// Only meaningful once the whole track has been flushed, because the search reads the whole activation: a path
+        /// chosen from part of a track is a different path, and the beats near the end of what has arrived would move
+        /// every time more audio did.
+        /// </remarks>
+        public IReadOnlyList<double> SearchedBeats
+            => BeatSequenceSearch.Frames(activation.ToArray(), null)
+                                 .Select(frame => BeatThisBeatTracker.FrameToMilliseconds(frame))
+                                 .ToArray();
 
         /// <summary>How much audio has been fed in, in samples.</summary>
         public int SampleCount => samples.Count;

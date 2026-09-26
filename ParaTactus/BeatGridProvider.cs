@@ -52,6 +52,18 @@ namespace ParaTactus
         /// <summary>The model the analysis runs.</summary>
         public string ModelPath => modelPath;
 
+        /// <summary>
+        /// Whether to choose the beats by searching for a steady tempo rather than by picking peaks.
+        /// </summary>
+        /// <remarks>
+        /// Off by default, out of honesty about which is better rather than about which is newer. Measured against the
+        /// beatmap's own grid on the reference track, the search covers more of the map's beats - 47% of them in a
+        /// passage accelerating from 150 to 400 BPM against the peak picking's 25%, and 87% in the last passage against
+        /// 56% - and finds a lower metrical level in the fastest passages, which is a judgement about what a pulse
+        /// should look like that a measurement cannot make for itself.
+        /// </remarks>
+        public bool SearchForBeats { get; set; }
+
         /// <summary>Where analysed grids are kept.</summary>
         public BeatGridCache Cache { get; }
 
@@ -119,7 +131,13 @@ namespace ParaTactus
                     // reports run from 200ms to 620ms around a 300ms beat, firing on subdivisions in places and
                     // missing beats in others. A display driven straight from that pulses unevenly through music a
                     // listener hears as steady, which is the one thing the visuals must not do.
-                    grid = BeatGrid.FromBeats(BeatTrainRegulariser.Regularise(tracker.Beats));
+                    //
+                    // The search is an alternative to that, not a second stage after it: it chooses the beats from the
+                    // activation with the tempo in its state, and re-spacing what it chose would throw away the
+                    // steadiness it just paid for.
+                    grid = SearchForBeats
+                        ? BeatGrid.FromBeats(tracker.SearchedBeats)
+                        : BeatGrid.FromBeats(BeatTrainRegulariser.Regularise(tracker.Beats));
                 }
                 catch (Exception error)
                 {
