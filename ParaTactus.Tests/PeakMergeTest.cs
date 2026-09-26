@@ -7,17 +7,21 @@ using ParaTactus;
 namespace ParaTactus.Tests
 {
     /// <summary>
-    /// The peak merge has to agree with the published postprocessor, floating-point mean included.
+    /// The peak merge groups adjacent frames the way the published postprocessor does, and then sharpens the result.
     /// </summary>
     /// <remarks>
-    /// The reference is <c>deduplicate_peaks(width=1)</c> in <c>beat_this/model/postprocessor.py</c>: groups of adjacent
-    /// peak frames no more than one frame apart become the mean of the group, and that mean is a real number - it is
-    /// converted to a time only at the end. This port accumulated it in an <c>int</c>, so integer division dropped the
-    /// fraction at every step: a plateau of frames 10, 11 and 12 came out at 10 rather than 10.5, which is a systematic
-    /// 10ms shift on every merged beat. At this frame rate a frame is 20ms, over 3% of a 600ms beat.
+    /// The grouping is the reference's <c>deduplicate_peaks(width=1)</c> in <c>beat_this/model/postprocessor.py</c>:
+    /// adjacent peak frames no more than one frame apart become one beat at their mean, and that mean is a real number
+    /// - it is converted to a time only at the end. This port accumulated it in an <c>int</c>, so integer division
+    /// dropped the fraction at every step: a plateau of frames 10, 11 and 12 came out at 10 rather than 10.5, which is
+    /// a systematic 10ms shift on every merged beat. At this frame rate a frame is 20ms.
     ///
-    /// The test carries the reference's algorithm, transcribed, and compares it with what the tracker produces for the
-    /// same peaks.
+    /// What is deliberately not the reference's is where the beat is within the group. The model reports one value per
+    /// 20ms frame, so a beat read off it is on a frame; the reference leaves it there and this reads the peak's real
+    /// position from a parabola through it and its neighbours. That is a deviation and it is here on purpose: measured
+    /// against a beatmap's own grid, a frame is the seventh of a beat at 200 BPM and the quantisation is a real part of
+    /// the distance. The grouping is still compared with the reference, because the grouping is what the reference
+    /// settled and there is no argument with it; the refinement is compared with arithmetic.
     /// </remarks>
     [TestFixture]
     public class PeakMergeTest
@@ -68,20 +72,43 @@ namespace ParaTactus.Tests
         }
 
         [Test]
-        public void TheMergeAgreesWithTheReference()
+        public void TheGroupsAreTheOnesTheReferenceForms()
         {
             // A three-frame plateau above zero, an isolated peak, then a two-frame plateau.
             float[] logits = activation((10, 2f), (11, 2f), (12, 2f), (20, 3f), (30, 1.5f), (31, 1.5f));
-            double[] expected = referenceDeduplicate(new[] { 10, 11, 12, 20, 30, 31 });
+            double[] reference = referenceDeduplicate(new[] { 10, 11, 12, 20, 30, 31 });
             double[] actual = BeatThisBeatTracker.RawPeaks(logits).ToArray();
 
-            Assert.That(actual, Is.EqualTo(expected).Within(1e-9));
+            // The groups are the reference's, and each is where the reference puts it to within the half frame a
+            // refinement is allowed to move it. Note the plateau: the reference splits three adjacent frames into two
+            // beats, because once its running mean has moved the third frame is more than one frame from it. Both
+            // readings put a beat either side of the plateau's middle, so the split is not what is being argued here;
+            // its exact positions are, and the reference's are within the half frame this allows.
+            Assert.That(actual.Length, Is.EqualTo(reference.Length), "the reference forms four groups from these peaks");
 
-            // Stated separately, because these are the numbers the rule means. Note the third frame of the plateau: once
-            // the running mean has moved back to 10.5, frame 12 is more than one frame away and starts a group of its
-            // own, so a three-frame plateau yields two peaks. That is the reference's behaviour as well - the mean is
-            // what the next comparison is against - and it is pinned here so that a future tidy-up has to argue with it.
-            Assert.That(actual, Is.EqualTo(new[] { 10.5, 12.0, 20.0, 30.5 }).Within(1e-9));
+            for (int i = 0; i < actual.Length; i++)
+            {
+                Assert.That(actual[i], Is.EqualTo(reference[i]).Within(0.5),
+                    $"group {i} moved further than the half frame a refinement is allowed");
+            }
+        }
+
+        [Test]
+        public void TheBeatIsReadBetweenTheFrames()
+        {
+            // The value after the peak is larger than the value before it, so the peak is later than its frame. The
+            // vertex of the parabola through (4, 1), (5, 2), (6, 1.5) is at 5 + 0.5*(1-1.5)/(1 - 4 + 1.5).
+            float[] leaningRight = activation((4, 1f), (5, 2f), (6, 1.5f));
+            double later = BeatThisBeatTracker.RawPeaks(leaningRight).Single();
+
+            Assert.That(later, Is.GreaterThan(5), "the peak leans to the right, so the beat is after its frame");
+            Assert.That(later, Is.EqualTo(5 + (0.5 * (1 - 1.5) / (1 - 4 + 1.5))).Within(1e-9));
+
+            float[] leaningLeft = activation((4, 1.5f), (5, 2f), (6, 1f));
+            double earlier = BeatThisBeatTracker.RawPeaks(leaningLeft).Single();
+
+            Assert.That(earlier, Is.LessThan(5));
+            Assert.That(earlier, Is.EqualTo(5 + (0.5 * (1.5 - 1) / (1.5 - 4 + 1))).Within(1e-9));
         }
 
         [Test]

@@ -461,8 +461,12 @@ namespace ParaTactus
         }
 
         /// <summary>
-        /// Runs the model over the whole spectrogram and returns the frames it reports as beats.
+        /// The frames the model reports as beats, merged and pruned.
         /// </summary>
+        /// <remarks>
+        /// Runs the whole peak pass over the spectrogram the model was already run on and returns positions that are
+        /// real numbers of frames, not whole ones; see <see cref="RawPeaks"/> and <see cref="interpolate"/>.
+        /// </remarks>
         internal static List<double> Peaks(float[] logits)
         {
             return Prune(RawPeaks(logits), logits);
@@ -476,6 +480,53 @@ namespace ParaTactus
         /// the model or by the pruning is not visible in the pruned output, and the two have different fixes.
         /// </remarks>
         internal static List<double> RawPeaks(float[] logits)
+        {
+            // Adjacent frames within one of each other describe one beat; the average of the group is its position.
+            // The average is a real number rather than a frame, which is what the reference keeps it as
+            // (deduplicate_peaks in the published postprocessor). Rounding it to a frame here would move every merged
+            // plateau by up to one frame, which is 20ms at this frame rate and over 3% of a 600ms beat. The mean used
+            // to be accumulated in an int, so integer division truncated it at every step of the group.
+            //
+            // A group of more than one frame keeps its mean, which is where its middle is, and is not refined further:
+            // a plateau is a peak whose top is flat, and the parabola through the frames either side of it describes a
+            // curve that is not there. Refining it moved a two-frame plateau off its own centre and back onto a frame,
+            // which is what the test for it caught. A single-frame peak has a top to read, and is refined.
+            var sharpened = new List<double>();
+
+            foreach (Group group in Merge(FramePeaks(logits)))
+                sharpened.Add(group.Width == 1 ? interpolate(logits, group.Centre) : group.Centre);
+
+            return sharpened;
+        }
+
+        /// <summary>
+        /// The peaks with adjacent frames merged into one beat each, at the mean of the frames, and no refinement.
+        /// </summary>
+        /// <remarks>
+        /// Split out of <see cref="RawPeaks"/> so the merge and the refinement can be measured apart from each other.
+        /// They are two separate claims - one that an integer division was dropping a fraction, the other that a frame
+        /// is not where a peak is - and a single before-and-after of the two together cannot say which earned what.
+        /// </remarks>
+        internal static List<double> MergedPeaks(float[] logits)
+        {
+            return Merge(FramePeaks(logits)).Select(group => group.Centre).ToList();
+        }
+
+        /// <summary>
+        /// How many frames each merged peak was made of, in order.
+        /// </summary>
+        /// <remarks>
+        /// Exposed so whether the merge does anything at all can be read rather than inferred. A reading that reports
+        /// one frame per peak means the merge is a no-op on that material, which is a fact about the model's output
+        /// rather than about the merge, and the two are indistinguishable from the merged positions alone.
+        /// </remarks>
+        internal static List<int> MergedWidths(float[] logits)
+        {
+            return Merge(FramePeaks(logits)).Select(group => group.Width).ToList();
+        }
+
+        /// <summary>The frames above zero that are as high as everything within the peak radius of them.</summary>
+        internal static List<int> FramePeaks(float[] logits)
         {
             var peaks = new List<int>();
 
@@ -499,12 +550,32 @@ namespace ParaTactus
                     peaks.Add(i);
             }
 
-            // Adjacent frames within one of each other describe one beat; the average of the group is its position.
-            // The average is a real number rather than a frame, which is what the reference keeps it as
-            // (deduplicate_peaks in the published postprocessor). Rounding it to a frame here would move every merged
-            // plateau by up to one frame, which is 20ms at this frame rate and over 3% of a 600ms beat. The mean used
-            // to be accumulated in an int, so integer division truncated it at every step of the group.
-            var merged = new List<double>();
+            return peaks;
+        }
+
+        /// <summary>One merged beat: where it is, and how many frames went into it.</summary>
+        /// <remarks>
+        /// The width is carried rather than re-derived from the centre, because a lone peak's centre is a whole number
+        /// but so is a plateau's when its mean happens to land on a frame, and asking a number which of the two it is
+        /// gets the second case wrong.
+        /// </remarks>
+        private readonly struct Group
+        {
+            public Group(double centre, int width)
+            {
+                Centre = centre;
+                Width = width;
+            }
+
+            public double Centre { get; }
+
+            public int Width { get; }
+        }
+
+        /// <summary>Adjacent frames no more than one apart as one beat at their running mean.</summary>
+        private static List<Group> Merge(List<int> peaks)
+        {
+            var merged = new List<Group>();
 
             if (peaks.Count == 0)
                 return merged;
@@ -521,15 +592,52 @@ namespace ParaTactus
                 }
                 else
                 {
-                    merged.Add(position);
+                    merged.Add(new Group(position, count));
                     position = peaks[i];
                     count = 1;
                 }
             }
 
-            merged.Add(position);
+            merged.Add(new Group(position, count));
 
             return merged;
+        }
+
+        /// <summary>
+        /// Where a peak sits between its frames, from the parabola through it and its neighbours.
+        /// </summary>
+        /// <remarks>
+        /// The vertex of the parabola through three equally spaced samples is half the difference of the outer two over
+        /// twice the middle minus the outer two, measured from the middle. Bounded to half a frame, so a flat or
+        /// lopsided peak cannot throw the answer outside the frame it was found in.
+        ///
+        /// Only a peak that is one frame wide has a top to read this way, and only those are offered here. A wider peak
+        /// is a flat top, and the parabola through the frames around it curves for reasons that are not its shape; see
+        /// <see cref="RawPeaks"/>.
+        ///
+        /// The model reports one value per 20ms frame, so a peak is on a frame unless something is done about it - and
+        /// 20ms is a frame at 50fps, or the seventh of a beat at 200 BPM. Measured against a beatmap's own grid the
+        /// middle beat lands 25 to 40ms from it, and part of that is this quantisation rather than a wrong beat.
+        /// </remarks>
+        private static double interpolate(float[] logits, double frame)
+        {
+            int at = (int)Math.Round(frame);
+
+            if (at <= 0 || at >= logits.Length - 1)
+                return frame;
+
+            double before = logits[at - 1];
+            double middle = logits[at];
+            double after = logits[at + 1];
+
+            double denominator = before - (2 * middle) + after;
+
+            if (Math.Abs(denominator) < 1e-9)
+                return frame;
+
+            double offset = 0.5 * (before - after) / denominator;
+
+            return frame + Math.Clamp(offset, -0.5, 0.5);
         }
 
         /// <summary>
