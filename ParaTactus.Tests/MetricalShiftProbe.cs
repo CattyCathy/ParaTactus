@@ -12,15 +12,19 @@ namespace ParaTactus.Tests
     /// Shows why the metrical level decision moves a grid by four octaves on tracks that need no move at all.
     /// </summary>
     /// <remarks>
-    /// On five of twelve beatmaps the grid the player is handed holds four per cent of the beats the tracker found:
-    /// five hundred and one beats become thirty-two, three hundred and thirty become twenty-one. The shift reported is
-    /// four, which divides every interval by sixteen, and the decision that produces it requires the intervals to look
-    /// like a tempo sixteen times too fast to be in the comfortable range. Either the intervals really are that short -
-    /// in which case the beats being levelled are not beats - or the arithmetic that chooses the shift is reading them
-    /// wrongly, and the two need different answers.
+    /// On five of twelve beatmaps the grid the player is handed holds four per cent of the beats the beats it is built
+    /// from: five hundred and one beats become thirty-two, three hundred and thirty become twenty-one. The shift
+    /// reported is four, which keeps every sixteenth beat, and the decision that produces it requires the intervals to
+    /// look like a tempo sixteen times too fast to be in the comfortable range. So the intervals really are that short -
+    /// a median of thirty-three milliseconds, against a frame of twenty - and the beats being levelled are therefore not
+    /// evenly spaced musical beats.
     ///
-    /// So this prints what the decision reads: the distribution of the intervals it is given, which of them fall inside
-    /// the range, and what each candidate shift would achieve.
+    /// This prints what the decision reads, and two things about the beats themselves that the summary cannot show:
+    /// where in the track the tracker's beats fall, and how much of the track the model was confident about.
+    ///
+    /// A caution for anyone reading the output: <c>FramePeaks</c> answers in frame indices and <c>Peaks</c> answers in
+    /// milliseconds, and at fifty frames a second the two differ by a factor of twenty. Comparing one against the other
+    /// produces a contradiction that is entirely an artefact of the units, which cost an afternoon here.
     ///
     /// Set <c>OSUTEST_DATASET</c> and optionally <c>OSUTEST_ACTIVATION</c>.
     /// </remarks>
@@ -119,6 +123,74 @@ namespace ParaTactus.Tests
                 int beyond = activation.Count(v => v > 0);
 
                 TestContext.Out.WriteLine($"  activation frames above zero: {beyond} of {activation.Length}");
+
+                // Where in the track the positive frames are, which is the one thing left that could explain peaks in
+                // the first five per cent of a track whose activation covers all of it. A model that is confident early
+                // and doubtful later is a different fault from a peak picker that stops, and the summary cannot say
+                // which this is.
+                var perTenth = new System.Text.StringBuilder();
+
+                for (int tenth = 0; tenth < 10; tenth++)
+                {
+                    int from = tenth * activation.Length / 10;
+                    int to = (tenth + 1) * activation.Length / 10;
+                    int positive = 0;
+                    double best = double.MinValue;
+
+                    for (int frame = from; frame < to; frame++)
+                    {
+                        if (activation[frame] > 0)
+                            positive++;
+
+                        best = Math.Max(best, activation[frame]);
+                    }
+
+                    perTenth.Append($"{tenth}:{positive}/{best:0.0} ");
+                }
+
+                TestContext.Out.WriteLine($"  positives per tenth of the track (count/best value): {perTenth}");
+
+                // And what the padding value would be, so a frame the model never produced can be told from one it
+                // judged and disliked.
+                int padded = activation.Count(v => v <= -999);
+
+                TestContext.Out.WriteLine($"  frames holding the not-a-peak padding: {padded}");
+
+                // The two candidate explanations for peaks in the first five per cent of a track, told apart directly:
+                // the frames the peak picker accepts, before anything is merged or refined, and the intervals they are
+                // judged against. If the frames themselves reach the end of the track then the loss is downstream of the
+                // picker, and if they do not then the activation the picker was given is not the activation printed
+                // above.
+                var frames = BeatThisBeatTracker.FramePeaks(activation);
+
+                TestContext.Out.WriteLine($"  frames the picker accepts: {frames.Count}, "
+                                          + $"from {frames.FirstOrDefault()} to {frames.LastOrDefault()} of {activation.Length}");
+
+                // The same tenths again, but counting the peaks rather than the positive frames. The two lines have to
+                // agree about where the track is busy: if a tenth holds twenty positive frames and no peaks then the
+                // picker is refusing frames the activation is offering, and if it holds twenty and twenty peaks then
+                // the positive frames printed above are not the ones the picker was given.
+                var peaksPerTenth = new System.Text.StringBuilder();
+
+                for (int tenth = 0; tenth < 10; tenth++)
+                {
+                    int from = tenth * activation.Length / 10;
+                    int to = (tenth + 1) * activation.Length / 10;
+                    int count = frames.Count(f => f >= from && f < to);
+
+                    peaksPerTenth.Append($"{tenth}:{count} ");
+                }
+
+                TestContext.Out.WriteLine($"  peaks per tenth of the track: {peaksPerTenth}");
+
+                var widths = BeatThisBeatTracker.MergedWidths(activation);
+                var merged = BeatThisBeatTracker.MergedPeaks(activation);
+
+                TestContext.Out.WriteLine($"  after merging: {merged.Count} beats, "
+                                          + $"from {merged.FirstOrDefault():0.0} to {merged.LastOrDefault():0.0} frames");
+
+                TestContext.Out.WriteLine($"  merged widths: {string.Join(", ", widths.Take(20))}"
+                                          + (widths.Count > 20 ? $" ... ({widths.Count} groups)" : ""));
 
                 // The activation sampled across the track, because a length that covers the track and a last peak five
                 // per cent of the way in is a contradiction that only the values themselves can resolve.
