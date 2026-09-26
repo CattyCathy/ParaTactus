@@ -483,6 +483,420 @@ namespace ParaTactus.Tests
             }
         }
 
+        /// <summary>
+        /// Why the regulariser drops beats instead of filling the ones the tracker missed.
+        /// </summary>
+        /// <remarks>
+        /// The regulariser exists to do two opposite things: delete a beat the tracker put on a subdivision, and put
+        /// back a beat the tracker missed. Which one it does is decided entirely by the local period it measures, and
+        /// that period is measured from the tracker's own beats - so a passage where the tracker has lost every other
+        /// beat is a passage where most of the gaps are two periods long, the local estimate agrees with them, and
+        /// every remaining beat looks correctly spaced. Nothing is deleted and nothing is filled, and the passage plays
+        /// at half the density it should.
+        ///
+        /// This reads the two numbers that decide it: the local period the walk settles on, and the track's own
+        /// dominant period that a passage is compared against for the halving test. If the local period in a lost
+        /// passage has already come out at twice the tempo the rest of the track is at, the fill cannot fire, because
+        /// the gap it would fill is exactly one local period wide.
+        /// </remarks>
+        [Test]
+        public void ShowWhyTheRegulariserDropsBeatsInsteadOfFillingThem()
+        {
+            string corpus = Environment.GetEnvironmentVariable("OSUTEST_CORPUS");
+
+            if (string.IsNullOrEmpty(corpus) || !Directory.Exists(corpus))
+                Assert.Ignore("Set OSUTEST_CORPUS to a folder holding .osu files and their audio.");
+
+            string modelPath = Environment.GetEnvironmentVariable("OSUTEST_MODEL")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", $"{defaultModel}.onnx");
+
+            if (!File.Exists(modelPath))
+                Assert.Ignore($"no model at {modelPath}");
+
+            string wanted = Environment.GetEnvironmentVariable("OSUTEST_MAP");
+            string map = Directory.EnumerateFiles(corpus, "*.osu", SearchOption.AllDirectories)
+                                  .FirstOrDefault(f => wanted == null
+                                                       || Path.GetFileName(f).Contains(wanted, StringComparison.OrdinalIgnoreCase));
+
+            if (map == null)
+                Assert.Ignore($"no .osu file in {corpus} matching {wanted}");
+
+            string folder = Path.GetDirectoryName(map);
+            string audio = folder == null ? null : audioFor(map, folder);
+
+            if (audio == null)
+                Assert.Ignore($"no audio beside {map}");
+
+            List<TimingPoint> timing = timingPoints(map);
+
+            TestContext.Out.WriteLine($"beatmap: {Path.GetFileName(map)}");
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
+
+            double[] picked = BeatThisBeatTracker.Peaks(activations)
+                                                 .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                 .ToArray();
+
+            double[] regularised = BeatTrainRegulariser.Regularise(picked);
+            double dominant = BeatTrainRegulariser.Dominant(picked);
+
+            TestContext.Out.WriteLine($"  the tracker picked {picked.Length} beats; the regulariser's dominant period is {dominant:0}ms, or {60000 / dominant:0} BPM");
+            TestContext.Out.WriteLine($"  the regulariser kept {regularised.Length} of them ({100.0 * regularised.Length / Math.Max(1, picked.Length):0}%)");
+            TestContext.Out.WriteLine($"  the beatmap's own beats are one every {medianInterval(beatmapGrid(timing, picked.Length > 0 ? picked[^1] : 0)):0}ms");
+
+            // The gaps the tracker actually produced, which is what the local period is measured from. A spike at twice
+            // the map's interval with almost nothing at the map's own interval is the signature of a passage lost by
+            // halves: the beats are not ragged, they are every other one.
+            var buckets = new SortedDictionary<int, int>();
+
+            for (int i = 1; i < picked.Length; i++)
+            {
+                int bucket = (int)(Math.Round((picked[i] - picked[i - 1]) / 20) * 20);
+
+                buckets[bucket] = buckets.TryGetValue(bucket, out int seen) ? seen + 1 : 1;
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the gaps between the tracker's picked beats, in 20ms buckets, most common first:");
+            TestContext.Out.WriteLine("     gap    count   BPM at that gap");
+
+            foreach (var pair in buckets.OrderByDescending(pair => pair.Value).Take(12))
+                TestContext.Out.WriteLine($"  {pair.Key,6}ms {pair.Value,6}   {60000.0 / Math.Max(1, pair.Key),10:0}");
+
+            // The same question the regulariser asks, at a handful of places spread through the track: the gap to the
+            // previous beat, the local period it is judged against, and which of the three branches that lands in.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the decision at each tenth of the track:");
+            TestContext.Out.WriteLine("      at     gap   local period   gap/period   what the walk does");
+
+            for (int tenth = 1; tenth <= 10; tenth++)
+            {
+                int index = Math.Min(picked.Length - 1, picked.Length * tenth / 10);
+
+                if (index < 1)
+                    continue;
+
+                double gap = picked[index] - picked[index - 1];
+                double period = BeatTrainRegulariser.LocalPeriodAt(picked, index);
+                double ratio = period > 0 ? gap / period : 0;
+
+                string verdict = period <= 0
+                    ? "no period measured"
+                    : ratio < 0.85
+                        ? "deletes the beat as a subdivision"
+                        : ratio > 1.45 && ratio <= 5.0
+                            ? $"fills {Math.Round(ratio) - 1} missing beat(s)"
+                            : ratio > 5.0
+                                ? "treats it as a break in the music"
+                                : "keeps it as it is";
+
+                TestContext.Out.WriteLine($"  {picked[index] / 1000,5:0}s {gap,7:0}ms {period,12:0}ms {ratio,12:0.00}   {verdict}");
+            }
+
+            // The evidence that is not the beats themselves. Whether a long gap is a missed beat or a real change of
+            // tempo is invisible in the beat positions - the gap is the same shape either way - and visible in the
+            // model's own activation, which either believes in a beat in the middle of it or does not. What is needed
+            // is not an opinion about that but a measurement of how separable the two cases are on real material, and
+            // in particular of whether a genuine tempo change looks like the halves of the fast passages.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("what the model believes in the middle of each gap, which is what tells a missed beat");
+            TestContext.Out.WriteLine("from a genuine one:");
+            TestContext.Out.WriteLine("   gap class    gaps   midpoint above zero   midpoint is a local peak   midpoint - track mean   best within 100ms");
+
+            // The gap classes are read off the map's own beat, so they mean something: a gap of one map beat is the
+            // track's own spacing and needs no beat inside it, and a gap of two is exactly where one is missing.
+            double mapInterval = medianInterval(beatmapGrid(timing, picked.Length > 0 ? picked[^1] : 0));
+
+            // Before any of the distances is believed, the reference itself has to be checked. Every number here is a
+            // distance from this grid, and a grid built wrongly makes the tracker look wrong by exactly as much. What
+            // is checked is not whether the parse succeeded - that is a different question and the parser has its own
+            // notes - but whether the grid the parse produced is a plausible description of the track: its first beats,
+            // and how long its own spacings last, because a map that spends most of its length at one beat length and
+            // is being read as another is a map this cannot see.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine($"the reference grid, which every distance below is measured against ({timing.Count} tempo points):");
+            TestContext.Out.WriteLine("   at        BPM    beat length");
+
+            foreach (TimingPoint point in timing.Take(10))
+                TestContext.Out.WriteLine($"  {point.Time / 1000,6:0.0}s {60000 / point.BeatLength,7:0.0} {point.BeatLength,13:0}ms");
+
+            if (timing.Count > 10)
+                TestContext.Out.WriteLine($"  ... and {timing.Count - 10} more points, the last at {timing[^1].Time / 1000:0.0}s");
+
+            // How much of the track's duration each beat length accounts for, which is what the grid actually is rather
+            // than what its points say. A map whose points are mostly one value but whose length is mostly another is a
+            // map where the tempo points and the music disagree, and then the grid is not a reference at all.
+            var durations = new SortedDictionary<int, double>();
+
+            for (int i = 0; i < timing.Count; i++)
+            {
+                double end = i + 1 < timing.Count ? timing[i + 1].Time : picked.Length > 0 ? picked[^1] : timing[i].Time;
+                int bucket = (int)(Math.Round(timing[i].BeatLength / 20) * 20);
+
+                durations[bucket] = durations.TryGetValue(bucket, out double seen) ? seen + (end - timing[i].Time) : end - timing[i].Time;
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("how much of the track each beat length is declared over:");
+
+            foreach (var pair in durations.OrderByDescending(pair => pair.Value).Take(6))
+                TestContext.Out.WriteLine($"  {pair.Key,6}ms ({60000.0 / pair.Key,5:0} BPM): {pair.Value / 1000,7:0.0}s  {100 * pair.Value / Math.Max(1, picked.Length > 0 ? picked[^1] : 1),5:0.0}%");
+
+
+            var byClass = new SortedDictionary<int, List<int>>();
+
+            for (int i = 1; i < picked.Length; i++)
+            {
+                int classes = (int)Math.Round((picked[i] - picked[i - 1]) / mapInterval);
+
+                if (classes < 1 || classes > 6)
+                    continue;
+
+                if (!byClass.TryGetValue(classes, out List<int> frames))
+                {
+                    frames = new List<int>();
+                    byClass[classes] = frames;
+                }
+
+                frames.Add(midpointFrame(activations, picked[i - 1], picked[i]));
+            }
+
+            foreach (var pair in byClass)
+            {
+                int above = 0;
+                int peaked = 0;
+                double sum = 0;
+                double bestNearby = double.NegativeInfinity;
+                int bestOffset = 0;
+
+                foreach (int frame in pair.Value)
+                {
+                    if (frame < 0 || frame >= activations.Length)
+                        continue;
+
+                    if (activations[frame] > 0)
+                        above++;
+
+                    if (isPeakAt(activations, frame))
+                        peaked++;
+
+                    sum += activations[frame];
+
+                    // The strongest activation within a sixth of a second of the midpoint, and how far away it was. The
+                    // midpoint is where a missing beat would be if the beats either side of it were where they should
+                    // be, and they are not: the tracker places a beat 25 to 40ms early on average, so the beat that is
+                    // missing from a gap is not exactly halfway. A search at the exact midpoint alone therefore
+                    // measures the offset as much as it measures the beat, and reports a beat the model is sure about
+                    // as absent.
+                    for (int offset = -5; offset <= 5; offset++)
+                    {
+                        int at = frame + offset;
+
+                        if (at < 0 || at >= activations.Length)
+                            continue;
+
+                        if (activations[at] > bestNearby)
+                        {
+                            bestNearby = activations[at];
+                            bestOffset = offset;
+                        }
+                    }
+                }
+
+                double average = pair.Value.Count == 0 ? 0 : sum / pair.Value.Count;
+
+                TestContext.Out.WriteLine($"  {pair.Key,9}   {pair.Value.Count,6}   {100.0 * above / Math.Max(1, pair.Value.Count),17:0}%   {100.0 * peaked / Math.Max(1, pair.Value.Count),22:0}%   {average,20:+0.00;-0.00;0.00}   {bestNearby,14:+0.00;-0.00;0.00} at {bestOffset * 20,+4}ms");
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("for contrast, what the model believes at the beats it did detect:");
+            TestContext.Out.WriteLine("   reading                          count   above zero   is a local peak   value - track mean");
+
+            double mean = 0;
+
+            foreach (float value in activations)
+                mean += value;
+
+            mean /= Math.Max(1, activations.Length);
+
+            int atBeatAbove = 0;
+            int atBeatPeak = 0;
+            double atBeatSum = 0;
+            int atBeatCount = 0;
+
+            foreach (double beat in picked)
+            {
+                int frame = BeatThisBeatTracker.FrameOf(beat, activations.Length);
+
+                if (frame < 0 || frame >= activations.Length)
+                    continue;
+
+                atBeatCount++;
+
+                if (activations[frame] > 0)
+                    atBeatAbove++;
+
+                if (isPeakAt(activations, frame))
+                    atBeatPeak++;
+
+                atBeatSum += activations[frame];
+            }
+
+            TestContext.Out.WriteLine($"  the tracker's beats        {atBeatCount,8}   {100.0 * atBeatAbove / Math.Max(1, atBeatCount),9:0}%   {100.0 * atBeatPeak / Math.Max(1, atBeatCount),15:0}%   {atBeatSum / Math.Max(1, atBeatCount) - mean,19:+0.00;-0.00;0.00}");
+            TestContext.Out.WriteLine($"  the whole track mean is {mean:+0.00;-0.00;0.00}, which is the bar a beat has to clear");
+
+            // Whether the doubled gaps come in passages or one at a time, which is the difference between the music
+            // changing tempo and the picking losing a beat. A real change is a run of one spacing; a lost beat is a
+            // gap of two in the middle of gaps of one. Written as a string of digits, one per gap, because that is the
+            // shape of it and a histogram cannot show a shape.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine($"the gaps in time order as a multiple of the map's own beat ({mapInterval:0}ms), from a tenth in:");
+            TestContext.Out.WriteLine("  (a run of 2s is a passage at half density; 1 and 2 alternating is a beat being missed)");
+
+            var run = new System.Text.StringBuilder();
+            int runStart = picked.Length / 10;
+
+            for (int i = runStart; i < Math.Min(picked.Length, runStart + 160); i++)
+            {
+                int classes = (int)Math.Round((picked[i] - picked[i - 1]) / mapInterval);
+
+                run.Append(classes is >= 1 and <= 9 ? (char)('0' + classes) : '?');
+            }
+
+            TestContext.Out.WriteLine($"  {run}");
+
+            var runs = new SortedDictionary<int, int>();
+
+            for (int i = 1; i < picked.Length; i++)
+            {
+                int classes = (int)Math.Round((picked[i] - picked[i - 1]) / mapInterval);
+
+                if (classes is < 1 or > 9)
+                    classes = 0;
+
+                runs[classes] = runs.TryGetValue(classes, out int seen) ? seen + 1 : 1;
+            }
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("how many gaps of each size, as a multiple of the map's own beat:");
+
+            foreach (var pair in runs.OrderBy(pair => pair.Key))
+            {
+                string what = pair.Key switch
+                {
+                    0 => "not a whole number of map beats",
+                    1 => "the map's own spacing",
+                    2 => "a gap of two, so a beat is missing",
+                    _ => $"{pair.Key} map beats, so several are missing",
+                };
+
+                TestContext.Out.WriteLine($"  {pair.Key,3}: {pair.Value,6} gaps   {what}");
+            }
+
+            // The measurement the fill's threshold rests on: in a gap of two, is the model's strongest belief near the
+            // middle closer to what it reads on a beat or to what it reads between beats? A gap of one is the control,
+            // because nothing is missing there and its middle must read as the space between beats.
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine("the strongest activation near each gap's midpoint, as a share of the model's strength on the");
+            TestContext.Out.WriteLine("beats it did report:");
+
+            double level = beatLevel(activations, picked);
+
+            TestContext.Out.WriteLine($"  (that strength is {level:+0.00;-0.00;0.00}, and the whole track's mean is {mean:+0.00;-0.00;0.00})");
+
+            foreach (int classes in new[] { 1, 2, 3 })
+            {
+                var shares = new List<double>();
+
+                for (int i = 1; i < picked.Length; i++)
+                {
+                    if ((int)Math.Round((picked[i] - picked[i - 1]) / mapInterval) != classes)
+                        continue;
+
+                    if (strongestNear(activations, (picked[i - 1] + picked[i]) / 2, out double strength))
+                        shares.Add(strength / level);
+                }
+
+                if (shares.Count < 4)
+                    continue;
+
+                shares.Sort();
+
+                TestContext.Out.WriteLine($"  gaps of {classes}: {shares.Count,5} of them, share at the 25th/50th/75th percentile "
+                                          + $"{shares[shares.Count / 4],5:0.00} / {shares[shares.Count / 2],5:0.00} / {shares[shares.Count * 3 / 4],5:0.00}");
+            }
+        }
+
+        /// <summary>The frame halfway between two beats.</summary>
+        private static int midpointFrame(float[] activations, double from, double to)
+        {
+            double middle = (from + to) / 2;
+            double frame = middle * BeatThisBeatTracker.FramesPerSecond / 1000.0;
+
+            return BeatThisBeatTracker.FrameOf(frame, activations.Length);
+        }
+
+        /// <summary>Whether the activation at a frame is as high as everything within the peak radius of it.</summary>
+        private static bool isPeakAt(float[] activations, int frame)
+        {
+            if (frame < 0 || frame >= activations.Length || activations[frame] <= 0)
+                return false;
+
+            const int radius = 3;
+
+            for (int j = Math.Max(0, frame - radius); j <= Math.Min(activations.Length - 1, frame + radius); j++)
+            {
+                if (activations[j] > activations[frame])
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>The model's median activation on the beats a tracker reported.</summary>
+        private static double beatLevel(float[] activations, double[] beats)
+        {
+            var values = new List<double>(beats.Length);
+
+            foreach (double beat in beats)
+            {
+                int frame = BeatThisBeatTracker.FrameOf(beat * BeatThisBeatTracker.FramesPerSecond / 1000.0, activations.Length);
+
+                if (frame >= 0 && frame < activations.Length)
+                    values.Add(activations[frame]);
+            }
+
+            if (values.Count == 0)
+                return 0;
+
+            values.Sort();
+
+            return values[values.Count / 2];
+        }
+
+        /// <summary>The strongest activation near a time, within a sixth of a second.</summary>
+        private static bool strongestNear(float[] activations, double milliseconds, out double strength)
+        {
+            int centre = BeatThisBeatTracker.FrameOf(milliseconds * BeatThisBeatTracker.FramesPerSecond / 1000.0, activations.Length);
+            const int radius = 6;
+
+            strength = double.NegativeInfinity;
+
+            for (int offset = -radius; offset <= radius; offset++)
+            {
+                int at = centre + offset;
+
+                if (at < 0 || at >= activations.Length)
+                    continue;
+
+                if (activations[at] > strength)
+                    strength = activations[at];
+            }
+
+            return !double.IsNegativeInfinity(strength);
+        }
+
         /// <summary>One stage of the beat train, as a count, a rate and a middle gap.</summary>
         private static void stage(string name, double[] beats)
         {
