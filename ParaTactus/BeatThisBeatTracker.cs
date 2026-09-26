@@ -332,9 +332,24 @@ namespace ParaTactus
         /// </remarks>
         internal static InferenceSession OpenSession(string modelPath)
         {
+            return OpenSession(modelPath, Math.Max(1, Environment.ProcessorCount - 2));
+        }
+
+        /// <summary>
+        /// A session with a chosen number of threads, for work that is not playing anything.
+        /// </summary>
+        /// <remarks>
+        /// The count above is chosen to leave the audio callback somewhere to run, which is the right choice while a
+        /// track is playing and the wrong one for a batch. Analysing a corpus has no audio thread to protect, and the
+        /// difference is not small: measured on one four-minute track the same analysis takes 363 seconds at the
+        /// playing thread count. This overload exists so that the batch path can say what it wants instead of
+        /// inheriting a decision made for a different situation.
+        /// </remarks>
+        internal static InferenceSession OpenSession(string modelPath, int threads)
+        {
             var options = new SessionOptions
             {
-                IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount - 2),
+                IntraOpNumThreads = Math.Max(1, threads),
                 InterOpNumThreads = 1,
             };
 

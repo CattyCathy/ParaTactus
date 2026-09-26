@@ -45,22 +45,70 @@ namespace ParaTactus
         /// <summary>The assembled beat activation, one entry per frame from the start of the track.</summary>
         private readonly List<float> activation = new List<float>();
 
+        /// <summary>The assembled downbeat activation, the same length and the same frames.</summary>
+        private readonly List<float> downbeat = new List<float>();
+
         private InferenceSession session;
         private int nextFrame;
         private int emittedThrough;
         private bool flushed;
 
+        private readonly int threads;
+
         public StreamingBeatTracker(string modelPath, CancellationToken cancellation = default)
+            : this(modelPath, 0, cancellation)
+        {
+        }
+
+        /// <summary>
+        /// A tracker that runs the model on a chosen number of threads.
+        /// </summary>
+        /// <param name="modelPath">The model to run.</param>
+        /// <param name="threads">
+        /// How many threads the model may use, or zero to leave the machine two spare processors. The default is for a
+        /// track being played, where the audio callback must not end up queued behind the analysis; passing a count is
+        /// for analysing a corpus, where nothing is playing and the spare processors go to waste.
+        /// </param>
+        /// <param name="cancellation">Cancels a long analysis.</param>
+        public StreamingBeatTracker(string modelPath, int threads, CancellationToken cancellation = default)
         {
             if (string.IsNullOrEmpty(modelPath))
                 throw new ArgumentException("A model path is needed to track beats.", nameof(modelPath));
 
             this.modelPath = modelPath;
+            this.threads = threads;
             this.cancellation = cancellation;
         }
 
         /// <summary>The beats found so far, in milliseconds from the start of the track.</summary>
         public IReadOnlyList<double> Beats => beats;
+
+        /// <summary>
+        /// The model's own belief about a beat, one value per frame from the start of the track.
+        /// </summary>
+        /// <remarks>
+        /// The raw output rather than anything derived from it, and exposed because everything this class does with it
+        /// - picking peaks, searching for a tempo, spacing the result onto a metre - loses the part of it that says how
+        /// sure the model was. Where a beat is and whether there is one are different questions, and a reader that
+        /// wants the second cannot get it back out of a list of positions.
+        ///
+        /// Only meaningful once the whole track has been flushed, for the same reason <see cref="SearchedBeats"/> is.
+        /// </remarks>
+        public IReadOnlyList<float> Activation => activation;
+
+        /// <summary>
+        /// The model's own belief about a downbeat, one value per frame from the start of the track.
+        /// </summary>
+        /// <remarks>
+        /// Kept beside <see cref="Activation"/> rather than thrown away, and thrown away is what happened to it: the
+        /// chunk that produced it run took the beat head and dropped this one. What it adds is the metre - where the bar
+        /// starts - which is the kind of context that a decision about the metrical level needs, and it costs one array
+        /// to keep.
+        ///
+        /// It is a separate head and not a stronger beat, so nothing here should be read as the beat head scaled: on
+        /// this model's material the two disagree about a third of the time, and the disagreement is the information.
+        /// </remarks>
+        public IReadOnlyList<float> Downbeats => downbeat;
 
         /// <summary>
         /// The beats chosen by searching for the steadiest tempo, over the same activation.
@@ -263,14 +311,19 @@ namespace ParaTactus
             // The model is run once on this chunk and this chunk only. Going through the whole-file entry point would
             // split the input up again on the whole-file schedule, which is not what a chunk that has already been cut
             // to the reference's own chunk size should be put through.
-            session ??= BeatThisBeatTracker.OpenSession(modelPath);
+            session ??= threads > 0
+                ? BeatThisBeatTracker.OpenSession(modelPath, threads)
+                : BeatThisBeatTracker.OpenSession(modelPath);
 
-            var (chunkActivation, _) = BeatThisBeatTracker.RunChunk(session, input);
+            var (chunkActivation, chunkDownbeat) = BeatThisBeatTracker.RunChunk(session, input);
 
             // Chunks own contiguous runs of frames, so this normally just appends; a gap is filled with the same
             // not-a-peak value the whole-file path uses for frames no chunk claimed.
             while (activation.Count < firstOwned)
+            {
                 activation.Add(-1000);
+                downbeat.Add(-1000);
+            }
 
             for (int frame = firstOwned; frame < endOwned; frame++)
             {
@@ -278,11 +331,18 @@ namespace ParaTactus
                 // whatever zeros were put in front of it.
                 int index = frame - firstFrame + leftPad;
                 float value = index >= 0 && index < chunkActivation.Length ? chunkActivation[index] : -1000;
+                float bar = index >= 0 && index < chunkDownbeat.Length ? chunkDownbeat[index] : -1000;
 
                 if (frame < activation.Count)
+                {
                     activation[frame] = value;
+                    downbeat[frame] = bar;
+                }
                 else
+                {
                     activation.Add(value);
+                    downbeat.Add(bar);
+                }
             }
         }
     }

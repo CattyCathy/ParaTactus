@@ -1027,6 +1027,198 @@ namespace ParaTactus.Tests
             return !double.IsNegativeInfinity(strength);
         }
 
+        /// <summary>
+        /// The grid the player draws, built exactly the way the player builds it, checked for even spacing.
+        /// </summary>
+        /// <remarks>
+        /// Everything else here reads a stage of the beat train. This reads the finished grid through the same code
+        /// path the player takes - the tracker's beats or the search, then <see cref="BeatGrid.FromBeats"/>, which is
+        /// where the metrical level is decided - so that what is being judged is what is on screen and not something
+        /// upstream of it.
+        ///
+        /// The question it answers is whether the pulses are evenly spaced, because that is what the eye reads as the
+        /// beat. A tracker can be right about where the beats are and still look wrong if its gaps alternate: the eye
+        /// takes the widely and closely spaced pairs as a rhythm of their own, which is a different rhythm from the
+        /// music's. The measurement is the gaps inside a window, not a distance from anything, so it needs no reference
+        /// to be trusted.
+        ///
+        /// Set <c>OSUTEST_CORPUS</c>, <c>OSUTEST_MAP</c>, and optionally <c>OSUTEST_FROM</c> and <c>OSUTEST_LENGTH</c>
+        /// for the window, and <c>OSUTEST_SEARCH</c> for which of the two readings the player is set to.
+        /// </remarks>
+        [Test]
+        public void CheckTheFinishedGridForEvenSpacing()
+        {
+            string corpus = Environment.GetEnvironmentVariable("OSUTEST_CORPUS");
+
+            if (string.IsNullOrEmpty(corpus) || !Directory.Exists(corpus))
+                Assert.Ignore("Set OSUTEST_CORPUS to a folder holding .osu files and their audio.");
+
+            string modelPath = Environment.GetEnvironmentVariable("OSUTEST_MODEL")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", $"{defaultModel}.onnx");
+
+            if (!File.Exists(modelPath))
+                Assert.Ignore($"no model at {modelPath}");
+
+            string wanted = Environment.GetEnvironmentVariable("OSUTEST_MAP");
+            string map = Directory.EnumerateFiles(corpus, "*.osu", SearchOption.AllDirectories)
+                                  .FirstOrDefault(f => wanted == null
+                                                       || Path.GetFileName(f).Contains(wanted, StringComparison.OrdinalIgnoreCase));
+
+            if (map == null)
+                Assert.Ignore($"no .osu file in {corpus} matching {wanted}");
+
+            string folder = Path.GetDirectoryName(map);
+            string audio = folder == null ? null : audioFor(map, folder);
+
+            if (audio == null)
+                Assert.Ignore($"no audio beside {map}");
+
+            bool search = string.Equals(Environment.GetEnvironmentVariable("OSUTEST_SEARCH"), "true", StringComparison.OrdinalIgnoreCase);
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
+
+            // The player's own choice, applied the way BeatGridProvider applies it.
+            BeatGrid grid = search
+                ? BeatGrid.FromBeats(BeatSequenceSearch.Frames(activations, null)
+                                                      .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                      .ToArray())
+                : BeatGrid.FromBeats(BeatTrainRegulariser.Regularise(BeatThisBeatTracker.Peaks(activations)));
+
+            TestContext.Out.WriteLine($"beatmap: {Path.GetFileName(map)}");
+            TestContext.Out.WriteLine($"the player is set to {(search ? "search for the beats" : "pick the peaks")}");
+            TestContext.Out.WriteLine($"the grid has {grid.Beats.Count} beats and was moved by {grid.MetricalShift} octaves");
+
+            double from = double.TryParse(Environment.GetEnvironmentVariable("OSUTEST_FROM"), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedFrom) ? parsedFrom : 30_000;
+            double length = double.TryParse(Environment.GetEnvironmentVariable("OSUTEST_LENGTH"), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedLength) ? parsedLength : 20_000;
+
+            var inside = grid.Beats.Where(b => b >= from && b <= from + length).ToArray();
+
+            TestContext.Out.WriteLine("");
+            TestContext.Out.WriteLine($"the beats from {from / 1000:0.0}s to {(from + length) / 1000:0.0}s, as the timeline draws them:");
+            TestContext.Out.WriteLine($"  count {inside.Length}");
+
+            if (inside.Length > 2)
+            {
+                var gaps = new List<double>();
+
+                for (int i = 1; i < inside.Length; i++)
+                    gaps.Add(inside[i] - inside[i - 1]);
+
+                var sorted = gaps.OrderBy(g => g).ToList();
+                double median = sorted[sorted.Count / 2];
+                double spread = sorted[(int)(sorted.Count * 0.75)] - sorted[(int)(sorted.Count * 0.25)];
+
+                TestContext.Out.WriteLine($"  median gap {median:0}ms, interquartile spread {spread:0}ms");
+                TestContext.Out.WriteLine($"  every gap: {string.Join(" ", gaps.Select(g => g.ToString("0")))}");
+
+                // What the eye sees: whether the gaps come in two sizes, which reads as a pulse within a pulse rather
+                // than as a beat. A gap of twice the median next to its neighbours is the visual signature of this, and
+                // it is a different fault from gaps that merely scatter.
+                int doubled = gaps.Count(g => g >= median * 1.6);
+                int singles = gaps.Count(g => Math.Abs(g - median) <= median * 0.3);
+
+                TestContext.Out.WriteLine("");
+                TestContext.Out.WriteLine($"  {singles} gaps near the median and {doubled} at more than 1.6 times it");
+                TestContext.Out.WriteLine(doubled == 0
+                    ? "  the spacing is even, so the eye reads a steady pulse"
+                    : "  the spacing alternates between the median and twice it, which the eye reads as two rhythms");
+            }
+        }
+
+        /// <summary>
+        /// Finds the stretches of a track where the finished grid is not evenly spaced.
+        /// </summary>
+        /// <remarks>
+        /// The question "where does it look wrong" cannot be answered by a median over a track, which is why the
+        /// windows have to be walked. A grid can be even for most of a track and ragged in a few passages, and the
+        /// average says nothing about either - and the passages are where the fault is, so finding them is the first
+        /// step to fixing it rather than describing it.
+        ///
+        /// Each window is judged on the spread of its own gaps relative to its own middle, because the tempo is not the
+        /// question here and a fast passage is not a worse one. What is reported is where the gaps alternate between
+        /// one size and twice it, which is the shape a lost beat makes and the shape the eye reads as two rhythms.
+        /// </remarks>
+        [Test]
+        public void FindThePassagesWhereTheGridIsRagged()
+        {
+            string corpus = Environment.GetEnvironmentVariable("OSUTEST_CORPUS");
+
+            if (string.IsNullOrEmpty(corpus) || !Directory.Exists(corpus))
+                Assert.Ignore("Set OSUTEST_CORPUS to a folder holding .osu files and their audio.");
+
+            string modelPath = Environment.GetEnvironmentVariable("OSUTEST_MODEL")
+                               ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", $"{defaultModel}.onnx");
+
+            if (!File.Exists(modelPath))
+                Assert.Ignore($"no model at {modelPath}");
+
+            string wanted = Environment.GetEnvironmentVariable("OSUTEST_MAP");
+            string map = Directory.EnumerateFiles(corpus, "*.osu", SearchOption.AllDirectories)
+                                  .FirstOrDefault(f => wanted == null
+                                                       || Path.GetFileName(f).Contains(wanted, StringComparison.OrdinalIgnoreCase));
+
+            if (map == null)
+                Assert.Ignore($"no .osu file in {corpus} matching {wanted}");
+
+            string folder = Path.GetDirectoryName(map);
+            string audio = folder == null ? null : audioFor(map, folder);
+
+            if (audio == null)
+                Assert.Ignore($"no audio beside {map}");
+
+            float[] samples = BassAudioDecoder.DecodeMono(audio, AnalysisAudio.SampleRate);
+            (float[] activations, _) = BeatThisBeatTracker.Activations(samples, modelPath);
+
+            double[] searched = BeatSequenceSearch.Frames(activations, null)
+                                                  .Select(f => BeatThisBeatTracker.FrameToMilliseconds(f))
+                                                  .ToArray();
+
+            double[] peaked = BeatTrainRegulariser.Regularise(BeatThisBeatTracker.Peaks(activations));
+
+            TestContext.Out.WriteLine($"beatmap: {Path.GetFileName(map)}");
+
+            // Eight second windows, overlapping by half, because a fault shorter than the window still has to fill
+            // enough of it to move the spread and a window that never covers one whole fault can miss it.
+            const double window = 8_000;
+            const double step = 4_000;
+            const double end = 300_000;
+
+            foreach ((string name, double[] beats) in new[] { ("the search", searched), ("the peaks", peaked) })
+            {
+                TestContext.Out.WriteLine("");
+                TestContext.Out.WriteLine($"{name}: the eight-second windows with the raggiest spacing");
+                TestContext.Out.WriteLine("      at    beats   median gap   spread   gaps at 1.6x the median or more");
+
+                var rows = new List<(double At, int Count, double Median, double Spread, int Doubled)>();
+
+                for (double at = 0; at < Math.Min(end, beats.Length > 0 ? beats[^1] : 0); at += step)
+                {
+                    double[] inside = beats.Where(b => b >= at && b < at + window).ToArray();
+
+                    if (inside.Length < 5)
+                        continue;
+
+                    var gaps = new List<double>();
+
+                    for (int i = 1; i < inside.Length; i++)
+                        gaps.Add(inside[i] - inside[i - 1]);
+
+                    var sorted = gaps.OrderBy(g => g).ToList();
+                    double median = sorted[sorted.Count / 2];
+                    double spread = sorted[(int)(sorted.Count * 0.75)] - sorted[(int)(sorted.Count * 0.25)];
+
+                    // Relative, so a fast passage is not counted as ragged merely for being fast.
+                    rows.Add((at, inside.Length, median, spread / Math.Max(1, median), gaps.Count(g => g >= median * 1.6)));
+                }
+
+                foreach (var row in rows.OrderByDescending(r => r.Spread).Take(10))
+                {
+                    TestContext.Out.WriteLine($"  {row.At / 1000,6:0.0}s {row.Count,7} {row.Median,11:0}ms {row.Spread,8:0.00}   {row.Doubled,6}");
+                }
+            }
+        }
+
         /// <summary>One stage of the beat train, as a count, a rate and a middle gap.</summary>
         private static void stage(string name, double[] beats)
         {
