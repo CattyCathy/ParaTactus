@@ -422,15 +422,27 @@ namespace ParaTactus.Tests
 
             // The model's preference only wins if it is decisive. A track whose grid the model separates equally well
             // at two levels keeps the one its mapper wrote, which is the level the objects were placed against.
+            //
+            // And it never wins at all when the caller has said the map is the reference. That is a choice about what
+            // the labels are for rather than about which is more musical, and the two genuinely differ: on this corpus
+            // the hit objects of one track sit a quarter of the way through the map's declared beat, so the declared
+            // tempo is a snap grid and the notes are four times denser than it - and on another they sit two and a
+            // third times the declared beat. A detector is being built to agree with the file, so the file decides.
+            bool mapIsReference = Environment.GetEnvironmentVariable("OSUTEST_MAP_LEVEL") == "1";
+
             if (best != 0 && !double.IsNaN(ownSeparation))
             {
-                bool decisive = bestSeparation > 0
+                bool decisive = !mapIsReference
+                                && bestSeparation > 0
                                 && bestSeparation > ownSeparation * octave_override_ratio
                                 && bestSeparation > ownSeparation + 1e-9;
 
                 if (!decisive)
                 {
-                    scores.Append($"  (kept 0 over {best}: {bestSeparation:0.000} against {ownSeparation:0.000})");
+                    scores.Append(mapIsReference
+                        ? $"  (forced to 0, the map's level: {best} scored {bestSeparation:0.000} against {ownSeparation:0.000})"
+                        : $"  (kept 0 over {best}: {bestSeparation:0.000} against {ownSeparation:0.000})");
+
                     best = 0;
                     bestSeparation = ownSeparation;
                 }
