@@ -74,6 +74,15 @@ namespace ParaTactus
         /// sweep put the level right on seven of the eight fastest beatmaps at this share, where the unsmoothed run
         /// managed five. A caller that knows its material is fast can pass its own share to
         /// <see cref="Beats(IReadOnlyList{float}, double, double)"/>.
+        ///
+        /// It was raised to three quarters and then put back, and the reason is worth keeping because the corpus
+        /// average and the track a person is listening to disagreed. At three quarters with the higher threshold the
+        /// thirty-track average is clearly better - reported rate 1.09 down to 0.94, precision 79.0% up to 87.3%,
+        /// middle error 9.2ms down to 7.4ms - and on the reference track's opening passage, which its map holds at
+        /// 144 BPM, the same change takes the beat count from 35 where the map implies 34.5 down to 27 and opens a gap
+        /// of 1028ms where the longest was 626ms. An average over thirty tracks cannot see that a tenth of the beats
+        /// going missing all landed in the passage someone is watching, and for a display a missing beat is worse than
+        /// an extra one: a gap of two beats is a pulse that stops where an extra beat is a pulse that stutters.
         /// </remarks>
         private const double suppression_share = 0.6;
 
@@ -375,6 +384,29 @@ namespace ParaTactus
         }
 
         /// <summary>
+        /// How confident the model has to be before a frame can carry a beat.
+        /// </summary>
+        /// <remarks>
+        /// A half, which is the value it has always been, and it was raised and put back. The aggregate argues for
+        /// raising it: against thirty maps' timing points a threshold of two thirds takes the reported rate from 1.09 of
+        /// the map's beats to 0.97 and the middle error from 9.2ms to 8.0ms, and against the labels the model was
+        /// trained on it takes precision from 77.6% to 85.0% while coverage only goes from 84.6% to 82.1%. The frames
+        /// between a half and two thirds are ones the model is not sure about and most of them are on beats that are not
+        /// there, so admitting them adds beats rather than finding them.
+        ///
+        /// What put it back is that the beats it removes are not spread evenly over a track. On the reference track's
+        /// opening passage, whose map holds 144 BPM, the reading at a half reports 35 beats where the map implies 34.5
+        /// - it is right there - and at two thirds it reports 31 with a gap of 1028ms where the longest was 626ms. So
+        /// the excess the corpus sees is in the passages the reading is already wrong about, and the frames removed to
+        /// fix those come disproportionately from the passages it is right about. A missing beat is worse for a display
+        /// than an extra one: a gap of two beats is a pulse that stops where an extra beat is a pulse that stutters.
+        ///
+        /// The honest reading of those two facts together is that one threshold cannot serve both, which means the
+        /// excess is a property of the model rather than of the reading, and the fix for it is in training.
+        /// </remarks>
+        private const float beat_threshold = 0.5f;
+
+        /// <summary>
         /// Which frames are beats: the model's most confident frames, with everything within a share of the predicted
         /// period suppressed.
         /// </summary>
@@ -418,7 +450,7 @@ namespace ParaTactus
 
             for (int i = 0; i < beats.Length; i++)
             {
-                if (beats[i] >= 0.5f)
+                if (beats[i] >= beat_threshold)
                     order.Add(i);
             }
 
