@@ -78,6 +78,35 @@ namespace ParaTactus.Tests
         }
 
         [Test]
+        public void TwoReadingsOfOneTrackDoNotShareAnAnswer()
+        {
+            // The same track analysed by peaks, by the tempo search and by a detector are three different answers to the
+            // same question, and a key made only of the track and the model serves whichever was written first.
+            // Measured: switching a detector on returned the tempo search's two thousand three hundred and fifteen
+            // beats in four milliseconds, where the detector reports eleven hundred.
+            string peaks = BeatGridCache.KeyFor(audio, model, "peaks");
+            string search = BeatGridCache.KeyFor(audio, model, "search");
+            string detector = BeatGridCache.KeyFor(audio, model, "detector:D:/models/a.onnx");
+            string another = BeatGridCache.KeyFor(audio, model, "detector:D:/models/b.onnx");
+
+            Assert.That(search, Is.Not.EqualTo(peaks), "the tempo search and the peak picking share a cache entry");
+            Assert.That(detector, Is.Not.EqualTo(peaks), "the detector and the peak picking share a cache entry");
+            Assert.That(detector, Is.Not.EqualTo(search), "the detector and the tempo search share a cache entry");
+            Assert.That(another, Is.Not.EqualTo(detector), "two detectors share a cache entry");
+
+            // Naming no reading is still its own key, so an older caller that does not know about this cannot collide
+            // with a newer one that does.
+            Assert.That(BeatGridCache.KeyFor(audio, model), Is.Not.EqualTo(peaks));
+        }
+
+        [Test]
+        public void TheKeyIsStableForTheSameReadings()
+        {
+            Assert.That(BeatGridCache.KeyFor(audio, model, "peaks"), Is.EqualTo(BeatGridCache.KeyFor(audio, model, "peaks")),
+                "the same track, model and reading have to give the same key or the cache never hits");
+        }
+
+        [Test]
         public void EditingTheTrackMissesTheCache()
         {
             string before = BeatGridCache.KeyFor(audio, model);

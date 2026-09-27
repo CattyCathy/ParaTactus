@@ -64,11 +64,28 @@ namespace ParaTactus
         /// Identifies a track, the model that analysed it and the analysis that did the work, so that changing any of
         /// the three misses the cache rather than serving beats that no longer describe the audio.
         /// </summary>
-        public static string KeyFor(string audioPath, string modelPath)
+        /// <param name="audioPath">The track.</param>
+        /// <param name="modelPath">The model named in the settings, whether or not it is the one that ran.</param>
+        /// <param name="reading">
+        /// Which reading produced the grid, which has to be part of the key and was not.
+        ///
+        /// The same track can be analysed four ways - peaks, the tempo search, and either of those replaced by a trained
+        /// detector - and all four write a grid for the same audio and the same model file. With the reading left out,
+        /// turning a detector on served the grid the previous reading had left behind: measured, a track came back in
+        /// four milliseconds with the two thousand three hundred and fifteen beats of the tempo search, when the
+        /// detector that had just been switched on reports eleven hundred. A cache that answers with the wrong
+        /// algorithm's answer is worse than no cache, because nothing about the result says it is stale.
+        /// </param>
+        public static string KeyFor(string audioPath, string modelPath, string reading = "")
         {
             var identity = new StringBuilder();
 
             identity.Append(analysis_version).Append('\n');
+
+            // The reading first, so that two readings of one track differ in the first bytes of what is hashed rather
+            // than only in a suffix.
+            if (!string.IsNullOrEmpty(reading))
+                identity.Append(reading).Append('\n');
 
             foreach (string path in new[] { audioPath, modelPath })
             {

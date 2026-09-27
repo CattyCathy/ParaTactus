@@ -84,11 +84,23 @@ namespace ParaTactus
         public BeatGridCache Cache { get; }
 
         /// <summary>
+        /// Which reading of the audio this provider is set to use, as a name for the cache key.
+        /// </summary>
+        /// <remarks>
+        /// Every setting that changes what the beats are has to appear here, or two settings share one cached answer
+        /// and the second one to be tried is served the first one's. The detector's path is in it as well as its name,
+        /// because two different detectors are two different readings of the same track.
+        /// </remarks>
+        private string reading => !string.IsNullOrEmpty(DetectorPath)
+            ? "detector:" + DetectorPath
+            : SearchForBeats ? "search" : "peaks";
+
+        /// <summary>
         /// Whether a track's beats are already known, without analysing anything.
         /// </summary>
         public bool IsCached(string audioPath)
         {
-            return Cache.TryLoad(BeatGridCache.KeyFor(audioPath, modelPath), out _);
+            return Cache.TryLoad(BeatGridCache.KeyFor(audioPath, modelPath, reading), out _);
         }
 
         /// <summary>
@@ -113,7 +125,7 @@ namespace ParaTactus
             if (!File.Exists(audioPath))
                 throw new FileNotFoundException($"No track at {audioPath}.", audioPath);
 
-            string key = BeatGridCache.KeyFor(audioPath, modelPath);
+            string key = BeatGridCache.KeyFor(audioPath, modelPath, reading);
 
             if (Cache.TryLoad(key, out BeatGrid cached))
                 return cached;
