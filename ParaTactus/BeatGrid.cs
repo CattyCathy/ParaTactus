@@ -63,6 +63,124 @@ namespace ParaTactus
         public IReadOnlyList<double> Beats => beats;
 
         /// <summary>
+        /// The same beats with every passage of one tempo laid out as an exactly even pulse, or null when the track has
+        /// no passage long enough to lay out.
+        /// </summary>
+        /// <remarks>
+        /// Computed on demand and kept beside <see cref="Beats"/> rather than replacing it, because the two answer
+        /// different questions and only one of them can be right. The tracked beats say where the music is - measured on
+        /// this corpus they land a middle three and a half milliseconds from a map's own beats - and their spacing is
+        /// uneven, because the tracker reports an extra beat every twenty or thirty and loses one every fifty. An even
+        /// pulse is what a person watching expects to see, and it is measurably further from the map's beats: laid over
+        /// these it moves the middle distance from 4.8ms to between 56 and 88 and takes the coverage from 93% to between
+        /// 32% and 59%.
+        ///
+        /// So this is for looking at rather than for counting on. A caller that draws beats can draw these; a caller
+        /// that needs to know where the music is has to use the tracked ones.
+        ///
+        /// The period of a passage is the middle of its own gaps rather than a line fitted through them, because a line
+        /// is dragged by exactly the extra beats being corrected - on one track a passage whose gaps have a middle of
+        /// 409.8ms fits a line of 386.5. The phase is the passage's own first beat, so an error in the period can only
+        /// accumulate within one passage and is bounded by its length rather than by the track's.
+        /// </remarks>
+        public IReadOnlyList<double> EvenBeats
+        {
+            get
+            {
+                if (even == null)
+                    even = evenTempo();
+
+                return even;
+            }
+        }
+
+        private double[] even;
+
+        /// <summary>
+        /// How many beats a track needs before a passage can be laid out at all.
+        /// </summary>
+        /// <remarks>
+        /// Eight, so that a passage has a few gaps to be measured from and the result is not one gap's width presented
+        /// as a tempo. Under this the tracked beats are drawn as they are.
+        /// </remarks>
+        private const int even_minimum_beats = 8;
+
+        private double[] evenTempo()
+        {
+            // A passage is measured from the gaps inside it, and one of eight beats is a gap or two either side - not
+            // enough to say what its tempo is, and enough to say it wrongly. Below that the tracked beats are all there
+            // is to draw, which is why this reports nothing rather than something even and unjustified.
+            if (beats.Length < even_minimum_beats)
+                return null;
+
+            TempoSection[] sections = TempoSections.Analyse(beats);
+
+            if (sections.Length == 0)
+                return null;
+
+            var out_ = new List<double>(beats.Length);
+            double last = double.NegativeInfinity;
+
+            foreach (TempoSection section in sections)
+            {
+                if (section.Period <= 0)
+                    continue;
+
+                // The passage's own first beat, which is the phase it is laid out from.
+                double anchor = double.NaN;
+
+                for (int i = 0; i < beats.Length; i++)
+                {
+                    if (beats[i] >= section.Start - 0.5)
+                    {
+                        anchor = beats[i];
+                        break;
+                    }
+                }
+
+                if (double.IsNaN(anchor))
+                    continue;
+
+                double at = anchor;
+
+                while (at < section.End)
+                {
+                    // Half a period is the guard against two passages both claiming the beat they share, and the same
+                    // either side of the track's first beat because the opening passage begins at it.
+                    if (at > last + (section.Period * 0.5) && at >= beats[0] - (section.Period * 0.5))
+                    {
+                        out_.Add(at);
+                        last = at;
+                    }
+
+                    at += section.Period;
+                }
+            }
+
+            return out_.Count >= 4 ? out_.ToArray() : null;
+        }
+
+        /// <summary>
+        /// The same beats laid out evenly, as a grid, or this grid when there is no passage to lay out.
+        /// </summary>
+        public BeatGrid WithEvenTempo()
+        {
+            IReadOnlyList<double> laid = EvenBeats;
+
+            return laid == null ? this : new BeatGrid(copyOf(laid), MetricalShift);
+        }
+
+        private static double[] copyOf(IReadOnlyList<double> values)
+        {
+            var copy = new double[values.Count];
+
+            for (int i = 0; i < copy.Length; i++)
+                copy[i] = values[i];
+
+            return copy;
+        }
+
+        /// <summary>
         /// How many octaves the beats were moved from what the tracker reported: positive means beats were dropped to
         /// halve the tempo, negative means beats were inserted to double it, zero means the tracker's own tactus stood.
         /// </summary>
