@@ -27,9 +27,14 @@ namespace ParaTactus.Tests
     ///
     /// One thing the timing points cannot say is which octave of themselves is the beat. A map's grid is a snap
     /// resolution and a dense map snaps to a quarter of the beat, so the labels are built at the octave the model
-    /// itself reads, decided per window by which octave's beats land on the activation. That is recorded per frame as
-    /// well, because it is the thing a detector is being trained to get right and a corpus where it varies is the
-    /// corpus worth having.
+    /// itself reads, decided once per track by which octave's beats the activation separates from the points between
+    /// them. That is recorded per frame as well, because it is the thing a detector is being trained to get right and a
+    /// corpus where it varies is the corpus worth having.
+    ///
+    /// Every grid point inside the audio is labelled, without exception: a label file with holes in it teaches a
+    /// detector to skip beats, and a skipped beat is a pulse the player cannot follow. The downbeats are written as
+    /// their own class, which the exporter used to leave unused - the first beat of every measure, from each timing
+    /// point's own phase, so that a reading which wants to know where the bar is has something to read.
     ///
     /// Set <c>OSUTEST_CORPUS</c> to a folder of .osz files, and <c>OSUTEST_DATASET</c> for where to write.
     /// </remarks>
@@ -37,9 +42,6 @@ namespace ParaTactus.Tests
     public class DatasetExportProbe
     {
         private const string defaultModel = "beat-this-final0-int8";
-
-        /// <summary>How much audio one example covers, in seconds.</summary>
-        private const double window_seconds = 8;
 
         [OneTimeSetUp]
         public void SetUp() => AudioTestEnvironment.Initialise();
@@ -60,6 +62,13 @@ namespace ParaTactus.Tests
                 Assert.Ignore($"no model at {modelPath}");
 
             var sets = Directory.EnumerateFiles(corpus, "*.osz", SearchOption.AllDirectories).OrderBy(f => f).ToList();
+
+            // A single set, so that one track's labels can be looked at without paying for the corpus. The id is what
+            // the manifest and every other tool keys on, which is the part of the file name before the first space.
+            string only = Environment.GetEnvironmentVariable("OSUTEST_ONLY");
+
+            if (!string.IsNullOrEmpty(only))
+                sets = sets.Where(f => Path.GetFileNameWithoutExtension(f).Split(' ')[0] == only).ToList();
 
             // A shard, so several exports can run at once. The work here is almost entirely the model's inference - 363
             // of 370 seconds for one four-minute track, measured - and that is already using every core the runtime
@@ -95,7 +104,7 @@ namespace ParaTactus.Tests
             TestContext.Out.WriteLine("");
 
             var manifest = new StringBuilder();
-            manifest.AppendLine("id\tset\taudio\tlabels\tframes\tbeats\tperiod\tlag\toctave\tusable");
+            manifest.AppendLine("id\tset\taudio\tlabels\tframes\tbeats\tperiod\tlag\toctave\tusable\tseparations");
 
             int exported = 0;
             int skipped = 0;
@@ -107,7 +116,9 @@ namespace ParaTactus.Tests
                 string audioPath = Path.Combine(audioDirectory, id + ".f32");
                 string labelPath = Path.Combine(labelDirectory, id + ".i8");
 
-                if (File.Exists(audioPath) && File.Exists(labelPath))
+                // A single set that was asked for by name is re-exported even when its files exist, because the reason
+                // to ask for one is to look at what a change did to it.
+                if (string.IsNullOrEmpty(only) && File.Exists(audioPath) && File.Exists(labelPath))
                 {
                     skipped++;
                     continue;
@@ -116,7 +127,7 @@ namespace ParaTactus.Tests
                 try
                 {
                     Row row = export(set, id, audioPath, labelPath, modelPath);
-                    manifest.AppendLine(row.ToLine(id, audioPath, labelPath));
+                    manifest.AppendLine(row.ToLine(id, audioPath, labelPath) + "\t" + row.Separations);
                     exported++;
 
                     TestContext.Out.WriteLine($"  [{exported,4}] {Path.GetFileName(set),-52} {row.Frames,7} frames  {row.Beats,6} beats  period {row.Period,4:0}ms  {(row.Usable ? "usable" : "not usable")}");
@@ -148,7 +159,7 @@ namespace ParaTactus.Tests
 
         private readonly struct Row
         {
-            public Row(int frames, int beats, double period, double lag, int octave, bool usable)
+            public Row(int frames, int beats, double period, double lag, int octave, bool usable, string separations)
             {
                 Frames = frames;
                 Beats = beats;
@@ -156,6 +167,7 @@ namespace ParaTactus.Tests
                 Lag = lag;
                 Octave = octave;
                 Usable = usable;
+                Separations = separations;
             }
 
             public int Frames { get; }
@@ -164,6 +176,9 @@ namespace ParaTactus.Tests
             public double Lag { get; }
             public int Octave { get; }
             public bool Usable { get; }
+
+            /// <summary>What the model scored each octave at, so that a decision can be judged without a second run.</summary>
+            public string Separations { get; }
 
             public string ToLine(string id, string audioPath, string labelPath)
                 => string.Join('\t', id, id, Path.GetFileName(audioPath), Path.GetFileName(labelPath),
@@ -244,44 +259,60 @@ namespace ParaTactus.Tests
                 var labels = new sbyte[frames];
                 var octaves = new sbyte[frames];
 
+                // The octave is chosen once for the whole track and every grid point inside the audio is labelled.
+                //
+                // It used to be chosen per window with the windows that the model could not separate a beat from the
+                // space between two of them skipped entirely, and that was wrong in a way that only showed on the
+                // material this exists for. Measured on one variable-tempo track, nine of its windows lost every one of
+                // their labels and seven of them lost a hundred per cent, so twenty-one seconds in a row had no beats
+                // at all; the labels came out at 69% of the map's beats over the track and the detector, faithfully
+                // trained on them, reproduced 68%. A detector that skips beats is worse than useless to a rhythm game,
+                // because the player is following its pulse and it is the pulse that has to be steady - so coverage of
+                // the map's own grid is the one property the labels cannot be allowed to trade away.
+                //
+                // What the gate was protecting against is real and is kept: the octave is still decided by which one
+                // the model separates best, which is measured below and reported. It is simply decided once, where a
+                // track's grid is overwhelmingly at one level - measured across three tracks, the per-window choice
+                // never once changed - and the decision is then not allowed to cost a beat.
+                (int octave, double separation, string scores) = chooseOctave(activation, timing, lag, until);
+
+                // A measure is four beats, so the downbeat is every fourth labelled beat. The phase is the timing
+                // point's own, which is where a mapper puts the measure's first beat, and it restarts at each point
+                // because a mapper who has moved the grid has usually moved it to a measure.
+                int beatsToABar = beatsPerBar(timing);
+                int beatInBar = 0;
                 int beats = 0;
-                int usableWindows = 0;
-                int windows = 0;
+                int downbeats = 0;
 
-                // Per window, because a map's grid can change level part way through and because the decision needs
-                // context: one window's worth of beats is what says whether they are the beat or half of it.
-                int windowFrames = (int)Math.Round(window_seconds * BeatThisBeatTracker.FramesPerSecond);
-                int stride = windowFrames / 2;
+                double scale = scaleFor(octave);
 
-                for (int start = 0; start < frames; start += stride)
+                for (int i = 0; i < timing.Count; i++)
                 {
-                    int end = Math.Min(frames, start + windowFrames);
-                    double from = start * 1000.0 / BeatThisBeatTracker.FramesPerSecond;
-                    double to = end * 1000.0 / BeatThisBeatTracker.FramesPerSecond;
+                    double length = timing[i].BeatLength * scale;
 
-                    (int octave, double rise) = chooseOctave(activation, timing, from, to, lag);
-
-                    windows++;
-
-                    if (rise > 2)
-                        usableWindows++;
-
-                    // Only the usable windows contribute labels. A window where the model does not separate a beat from
-                    // the space between two of them has nothing to teach: training on it would be training the network
-                    // to reproduce the model's uncertainty, and the octave chosen there is a coin toss.
-                    if (rise <= 2)
+                    if (length <= 5)
                         continue;
 
-                    foreach (double beat in gridFor(timing, to, Math.Pow(2, octave)).Where(b => b >= from && b < to))
-                    {
-                        int frame = (int)Math.Round(beat * BeatThisBeatTracker.FramesPerSecond / 1000.0);
+                    double end = i + 1 < timing.Count ? timing[i + 1].Time : Math.Max(until, timing[i].Time);
 
-                        if (frame >= start && frame < end && labels[frame] == 0)
-                        {
-                            labels[frame] = 1;
-                            octaves[frame] = (sbyte)octave;
-                            beats++;
-                        }
+                    for (double time = timing[i].Time; time < end && time <= until; time += length)
+                    {
+                        // Rounded to the nearest frame rather than truncated, so that the label sits where the grid
+                        // does rather than up to a frame early. At fifty frames a second that is the difference
+                        // between a twenty millisecond error and none.
+                        int frame = (int)Math.Round(time * BeatThisBeatTracker.FramesPerSecond / 1000.0);
+
+                        if (frame < 0 || frame >= frames || labels[frame] != 0)
+                            continue;
+
+                        labels[frame] = beatInBar == 0 ? (sbyte)2 : (sbyte)1;
+
+                        if (beatInBar == 0)
+                            downbeats++;
+
+                        octaves[frame] = (sbyte)octave;
+                        beats++;
+                        beatInBar = (beatInBar + 1) % beatsToABar;
                     }
                 }
 
@@ -292,8 +323,9 @@ namespace ParaTactus.Tests
                 File.WriteAllBytes(Path.ChangeExtension(labelPath, ".oct"), octaves.Select(v => (byte)v).ToArray());
 
                 TestContext.Out.WriteLine($"        timing: unzip {unzip:0.0}s  decode {decode - unzip:0.0}s  infer {infer - decode:0.0}s  label {label - infer:0.0}s  write {clock.Elapsed.TotalSeconds - label:0.0}s");
+                TestContext.Out.WriteLine($"        octave {octave} (separation {separation:0.00}) from {scores}, {beats} beats of which {downbeats} downbeats over {until / 1000:0}s");
 
-                return new Row(frames, beats, period, lag * 1000.0 / BeatThisBeatTracker.FramesPerSecond, 0, usableWindows > 0);
+                return new Row(frames, beats, period, lag * 1000.0 / BeatThisBeatTracker.FramesPerSecond, octave, separation > 0, scores);
             }
             finally
             {
@@ -302,19 +334,42 @@ namespace ParaTactus.Tests
             }
         }
 
-        /// <summary>The octave of a map's grid whose beats land most on the model's activation in a window.</summary>
+        /// <summary>
+        /// How much better than the map's own octave another octave has to score before the labels move to it.
+        /// </summary>
+        /// <remarks>
+        /// The model can be confidently wrong about the level, and on this corpus it is. Between the two exports, the
+        /// per-track decision moved fourteen of a hundred and thirteen tracks an octave - thirteen of them down, one
+        /// up - and on the one track that has been checked against its own hit objects the move was wrong and cost the
+        /// detector a third of its beats there: it reports 0.60 of a tempo-variable map's beats where the model trained
+        /// on the unchanged level reports 1.01.
+        ///
+        /// So the map's own grid is the default and the model only overrides it decisively. The margin is on the ratio
+        /// rather than on the difference, because the scores are not on a common scale - they run from about 2 to about
+        /// 18 across the corpus - and because the interval is required to straddle one, a track where both levels score
+        /// near zero never moves.
+        /// </remarks>
+        private const double octave_override_ratio = 1.25;
+
+        /// <summary>The octave of a map's grid the model's confidence agrees with, chosen once for the whole track.</summary>
         /// <remarks>
         /// A map's timing points are a snap resolution as much as a tempo, and a dense map snaps to a quarter of the
         /// beat, so the level a player taps can be an octave or two above what the map says. The model was trained on
         /// the level a person taps, so the octave it reads is the one the labels belong at, and asking it is more
         /// reliable than guessing from the beat length.
         ///
-        /// The measure is the difference between the activation at the grid's beats and at the points halfway between
-        /// them, both as a difference from the track's own mean. The difference rather than the level, because a grid
-        /// an octave too fine puts beats where the music has none and that shows up as a small difference rather than
-        /// as a small value.
+        /// Once for the whole track rather than per window. A window is a tenth of a second of a track's grid and a
+        /// decision made from one is a decision made from very little: measured across three tracks the per-window
+        /// choice never changed, so the extra resolution was never buying anything, and what it cost was that the
+        /// windows the decision was unsure about were dropped along with every label in them. One decision for a track
+        /// that holds one level is both steadier and free of that.
+        ///
+        /// The measure is how much of the grid the model reports a beat on, against how much of it falls between two
+        /// of its beats, both as a difference from the track's own mean. The difference rather than the level, because a
+        /// grid an octave too fine puts beats where the music has none and that shows up as a small difference rather
+        /// than as a small value.
         /// </remarks>
-        private static (int Octave, double Rise) chooseOctave(float[] activation, List<(double Time, double BeatLength)> timing, double from, double to, int lag)
+        private static (int Octave, double Separation, string Scores) chooseOctave(float[] activation, List<(double Time, double BeatLength)> timing, int lag, double until)
         {
             double mean = 0;
 
@@ -324,41 +379,85 @@ namespace ParaTactus.Tests
             mean /= Math.Max(1, activation.Length);
 
             int best = 0;
-            double bestRise = double.NegativeInfinity;
+            double bestSeparation = double.NegativeInfinity;
+            double ownSeparation = double.NaN;
+            var scores = new System.Text.StringBuilder();
 
             for (int octave = -2; octave <= 2; octave++)
             {
-                double[] grid = gridFor(timing, to, Math.Pow(2, octave));
+                double[] grid = gridFor(timing, until, scaleFor(octave));
                 var at = new List<double>();
                 var off = new List<double>();
 
                 for (int i = 0; i < grid.Length; i++)
-                {
-                    if (grid[i] < from || grid[i] >= to)
-                        continue;
-
                     at.Add(activationAt(activation, grid[i], lag) - mean);
 
-                    if (i + 1 < grid.Length)
-                        off.Add(activationAt(activation, (grid[i] + grid[i + 1]) / 2, lag) - mean);
-                }
+                // The points halfway between the grid's own, which is where a grid an octave too fine puts its own
+                // beats: it is the same set of instants seen from the other side, so an octave whose midpoints are as
+                // confident as its beats is an octave with beats where the music has none.
+                for (int i = 0; i + 1 < grid.Length; i++)
+                    off.Add(activationAt(activation, (grid[i] + grid[i + 1]) / 2, lag) - mean);
 
-                if (at.Count < 4)
+                if (at.Count < 8)
                     continue;
 
                 at.Sort();
                 off.Sort();
 
-                double rise = at[at.Count / 2] - (off.Count == 0 ? 0 : off[off.Count / 2]);
+                double separation = at[at.Count / 2] - (off.Count == 0 ? 0 : off[off.Count / 2]);
 
-                if (rise > bestRise)
+                // Reported for every octave rather than only the winner, because whether the winner won by a lot or by
+                // a hair is the whole question when a decision is being judged.
+                scores.Append($" {octave}:{separation:0.000}");
+
+                if (octave == 0)
+                    ownSeparation = separation;
+
+                if (separation > bestSeparation)
                 {
-                    bestRise = rise;
+                    bestSeparation = separation;
                     best = octave;
                 }
             }
 
-            return (best, bestRise);
+            // The model's preference only wins if it is decisive. A track whose grid the model separates equally well
+            // at two levels keeps the one its mapper wrote, which is the level the objects were placed against.
+            if (best != 0 && !double.IsNaN(ownSeparation))
+            {
+                bool decisive = bestSeparation > 0
+                                && bestSeparation > ownSeparation * octave_override_ratio
+                                && bestSeparation > ownSeparation + 1e-9;
+
+                if (!decisive)
+                {
+                    scores.Append($"  (kept 0 over {best}: {bestSeparation:0.000} against {ownSeparation:0.000})");
+                    best = 0;
+                    bestSeparation = ownSeparation;
+                }
+            }
+
+            return (best, bestSeparation, scores.ToString().Trim());
+        }
+
+        /// <summary>The multiplier that puts a map's grid at an octave of itself.</summary>
+        private static double scaleFor(int octave) => Math.Pow(2, octave);
+
+        /// <summary>
+        /// How many of a map's beats make a measure, from the beat length's own whole part.
+        /// </summary>
+        /// <remarks>
+        /// A beat of exactly a second is four beats to a bar and is the only case the format states, since a beat
+        /// length is written in milliseconds and a mapper who writes 1000 is writing 60 beats a minute four to the bar.
+        /// Every other length is the mapper's own convenience, so four is assumed and the whole part is only used when
+        /// it is plausible: a third of a second is a third of a bar, which rounds to nothing, and a bar of no beats
+        /// would put every beat on a downbeat.
+        /// </remarks>
+        private static int beatsPerBar(List<(double Time, double BeatLength)> timing)
+        {
+            double length = dominantBeatLength(timing);
+            int beats = (int)Math.Round(4.0 * length / 1000.0);
+
+            return beats is >= 2 and <= 16 ? beats : 4;
         }
 
         private static double activationAt(float[] activation, double milliseconds, int shift)

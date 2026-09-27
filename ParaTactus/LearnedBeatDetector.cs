@@ -40,8 +40,28 @@ namespace ParaTactus
         private const int hop_frames = 960;
 
         /// <summary>
-        /// How much of the predicted period two beats have to be apart, as a share of it.
+        /// How many frames either side of a picked peak are weighed when placing it between frames.
         /// </summary>
+        /// <remarks>
+        /// A beat is picked on a frame and a frame is twenty milliseconds, which is two thirds of the error a rhythm
+        /// game tolerates - so a third of the budget was being spent on the resolution of the answer rather than on the
+        /// answer. The curve over a peak's neighbourhood is smooth and its middle is where the beat is, so the peak is
+        /// placed at the middle of its neighbourhood weighted by how far above the neighbourhood's floor each frame is.
+        ///
+        /// Two either side, which is measured. Across three tracks, against their maps' timing points, the middle
+        /// distance from a beat went 13.9ms on the frame, 13.0 on a parabola through three frames, 13.6 on a weighted
+        /// middle over three, 12.7 over five and 14.1 over seven. The five-frame window is the one that helps most,
+        /// and it helps most on the material that needs it: on the variable-tempo track this was measured for, the
+        /// middle distance went from 26.2ms to 20.5ms where the parabola managed 22.1.
+        ///
+        /// A weighted middle rather than the parabola's vertex because the curve is not a parabola - it is a blur of a
+        /// narrow target, and the frames far enough from a peak to be worth reading are the ones a three-point fit
+        /// cannot see. The floor is subtracted first so that the weight is the peak's own height above its surroundings
+        /// rather than the curve's level, which on a loud passage would otherwise pull every peak towards the loudest
+        /// frame in the window.
+        /// </remarks>
+        private const int refinement_radius = 2;
+
         /// <remarks>
         /// Measured rather than chosen, and re-measured after a first version of the comparison turned out to have been
         /// reading the peak picker's frames as milliseconds. Swept against a dozen beatmaps and their own timing
@@ -154,14 +174,86 @@ namespace ParaTactus
             if (periodSmoothing > 0)
                 periods = smoothPeriods(periods, periodSmoothing);
 
-            int[] chosen = Suppress(beats, periods, share);
+            return Place(beats, periods, share);
+        }
 
+        /// <summary>
+        /// Which frame each beat is on, placed between frames where the curve says it belongs.
+        /// </summary>
+        /// <remarks>
+        /// The picking and the placing are separated because they answer different questions and are wrong in different
+        /// ways. The picking decides which frames are beats at all, and that is where the period head earns its keep.
+        /// The placing decides where inside the frame the beat is, which the picking cannot say because it only ever
+        /// compares frames to each other.
+        ///
+        /// Internal rather than private so that the placing can be tested against a curve whose answer is known, which
+        /// is the only way to tell a refinement that works from one that merely returns something plausible.
+        /// </remarks>
+        internal static double[] Place(float[] beats, float[] periods, double share)
+        {
+            int[] chosen = Suppress(beats, periods, share);
             var times = new double[chosen.Length];
 
             for (int i = 0; i < chosen.Length; i++)
-                times[i] = chosen[i] * 1000.0 / FramesPerSecond;
+                times[i] = Refine(beats, chosen[i]) * 1000.0 / FramesPerSecond;
 
             return times;
+        }
+
+        /// <summary>
+        /// The frame a peak is on, moved to where the curve's own middle is within
+        /// <see cref="refinement_radius"/> frames of it.
+        /// </summary>
+        /// <remarks>
+        /// The weight is each frame's height above the lowest frame in the window rather than its height outright,
+        /// because the curve's level varies over a track by far more than a peak's shape does: weighting by the level
+        /// would place a beat in a loud passage towards the loudest frame in its window and place it correctly in a
+        /// quiet one. Subtracting the floor leaves the shape.
+        ///
+        /// Only the frames continuously above that floor either side of the peak are read, and the rest of the window
+        /// is left out. That is not a refinement of the estimate, it is what keeps the estimate about one beat: a
+        /// window that reaches a second peak would otherwise place this beat at the middle of the two of them, which
+        /// moves it by up to a whole radius towards a beat that the suppression pass has already decided is not a beat.
+        /// A peak with a valley on one side is one-sided for the same reason, and one-sided is right - the beat is
+        /// where that peak is, not between the peak and the silence.
+        /// </remarks>
+        private static double Refine(float[] beats, int index)
+        {
+            int low = Math.Max(0, index - refinement_radius);
+            int high = Math.Min(beats.Length - 1, index + refinement_radius);
+
+            if (high <= low)
+                return index;
+
+            float floor = beats[index];
+
+            for (int i = low; i <= high; i++)
+                floor = Math.Min(floor, beats[i]);
+
+            int from = index;
+            int to = index;
+
+            while (from > low && beats[from - 1] > floor)
+                from--;
+
+            while (to < high && beats[to + 1] > floor)
+                to++;
+
+            double total = 0;
+            double weighted = 0;
+
+            for (int i = from; i <= to; i++)
+            {
+                double weight = beats[i] - floor;
+
+                if (weight <= 0)
+                    continue;
+
+                total += weight;
+                weighted += weight * i;
+            }
+
+            return total > 1e-9 ? weighted / total : index;
         }
 
         /// <summary>
