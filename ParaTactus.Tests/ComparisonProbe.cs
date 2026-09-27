@@ -72,6 +72,16 @@ namespace ParaTactus.Tests
                                        .Where(value => value > 0)
                                        .ToArray();
 
+            // The period smoothings to sweep, in seconds either side. Zero is the head used as it comes.
+            string smoothingList = Environment.GetEnvironmentVariable("OSUTEST_SMOOTHING") ?? "0";
+            double[] smoothings = smoothingList.Split(',')
+                                               .Select(part => double.TryParse(part.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value : -1)
+                                               .Where(value => value >= 0)
+                                               .ToArray();
+
+            if (smoothings.Length == 0)
+                smoothings = new double[] { 0 };
+
             // The comparison is run twice - once with the four slowest maps and once with everything - because the
             // objective is specifically about tempo-changing and fast material, and a median over a corpus that is
             // mostly one tempo cannot answer a question about the rest of it.
@@ -123,13 +133,19 @@ namespace ParaTactus.Tests
 
                 double[] gridBeats = playerGrid == null ? Array.Empty<double>() : playerGrid.Beats.ToArray();
 
-                // The detector at each suppression share under test, from one pass over the audio. The shares are swept
-                // in the same run as the comparison because the first value in use was chosen against a comparison
-                // whose units were wrong, and a share tuned on a bad reference is worth nothing.
-                var atShares = new Dictionary<double, Result>();
+                // The detector at each combination of suppression share and period smoothing under test, from one pass
+                // over the audio. Both are swept in the same run as the comparison because the share in use was first
+                // chosen against a comparison whose units were wrong, and a value tuned on a bad reference is worth
+                // nothing. Smoothing is in the sweep because it is the candidate answer to the pulses being unsteady:
+                // the period sets how far apart beats must be, so a period that wobbles frame to frame wobbles the
+                // spacing, and taking the middle of a window is the cheapest way to stop that.
+                var atShares = new Dictionary<(double Share, double Smoothing), Result>();
 
                 foreach (double share in shares)
-                    atShares[share] = Measure(detector.Beats(samples, share), grid, seconds);
+                {
+                    foreach (double smoothing in smoothings)
+                        atShares[(share, smoothing)] = Measure(detector.Beats(samples, share, smoothing), grid, seconds);
+                }
 
                 rows.Add(new Row(
                     fields[0],
@@ -144,7 +160,7 @@ namespace ParaTactus.Tests
             if (rows.Count == 0)
                 Assert.Fail("nothing could be measured");
 
-            Report(rows, shares);
+            Report(rows, shares, smoothings);
 
             // The maps whose own beat is fastest, which is the material the objective names and the material a median
             // over the corpus hides.
@@ -153,20 +169,22 @@ namespace ParaTactus.Tests
             TestContext.Out.WriteLine("");
             TestContext.Out.WriteLine($"the {quickest.Count} fastest beatmaps of those measured, on their own:");
 
-            Report(quickest, shares);
+            Report(quickest, shares, smoothings);
         }
 
-        private static void Report(List<Row> rows, double[] shares)
+        private static void Report(List<Row> rows, double[] shares, double[] smoothings)
         {
             TestContext.Out.WriteLine("");
             TestContext.Out.WriteLine("  map         period  shift |    peaks: n  rate | regularised: n | player grid: n | "
-                                      + string.Join(" | ", shares.Select(s => $"detector @{s:0.00}: n  rate  prec")));
+                                      + string.Join(" | ", from s in shares from m in smoothings
+                                                           select $"@{s:0.00}/{m:0.0}s: n  rate  stead"));
 
             foreach (Row row in rows.OrderBy(r => r.MapPeriod))
             {
-                var detectorCells = shares.Select(s => row.Detected.TryGetValue(s, out Result at)
-                    ? $"{at.Count,4} {at.Rate,5:0.00} {at.Precision,4:0}%"
-                    : "  n/a");
+                var detectorCells = from s in shares from m in smoothings
+                                    select row.Detected.TryGetValue((s, m), out Result at)
+                                        ? $"{at.Count,4} {at.Rate,5:0.00} {at.Steadiness,4:0}"
+                                        : "  n/a";
 
                 TestContext.Out.WriteLine($"  {row.Id,-10} {row.MapPeriod,5:0}ms {row.Shift,5} | "
                                           + $"{row.Raw.Count,12} {row.Raw.Rate,5:0.00} | "
@@ -175,7 +193,7 @@ namespace ParaTactus.Tests
             }
 
             TestContext.Out.WriteLine("");
-            TestContext.Out.WriteLine("  reading                 rate med   on level   coverage   precision   error med");
+            TestContext.Out.WriteLine("  reading                 rate med   on level   coverage   precision   error med   unsteady");
 
             foreach ((string name, Func<Row, Result> pick) in new (string, Func<Row, Result>)[]
                      {
@@ -188,7 +206,10 @@ namespace ParaTactus.Tests
             }
 
             foreach (double share in shares)
-                Summarise(rows, $"detector @{share:0.00}", r => r.Detected[share]);
+            {
+                foreach (double smoothing in smoothings)
+                    Summarise(rows, $"detector @{share:0.00}/{smoothing:0.0}s", r => r.Detected[(share, smoothing)]);
+            }
         }
 
         private static void Summarise(List<Row> rows, string name, Func<Row, Result> pick)
@@ -197,11 +218,13 @@ namespace ParaTactus.Tests
             var coverage = rows.Select(r => pick(r).Coverage).ToArray();
             var precision = rows.Select(r => pick(r).Precision).ToArray();
             var median = rows.Select(r => pick(r).Median).ToArray();
+            var steadiness = rows.Select(r => pick(r).Steadiness).ToArray();
 
             int onLevel = rates.Count(r => r > 0.75 && r < 1.33);
 
             TestContext.Out.WriteLine($"  {name,-22} {Median(rates),7:0.00} {onLevel,10}/{rates.Length} "
-                                      + $"{Median(coverage),9:0}% {Median(precision),10:0}% {Median(median),10:0}ms");
+                                      + $"{Median(coverage),9:0}% {Median(precision),10:0}% {Median(median),10:0}ms "
+                                      + $"{Median(steadiness),10:0}ms");
         }
 
         /// <summary>
@@ -230,7 +253,7 @@ namespace ParaTactus.Tests
         private readonly struct Row
         {
             public Row(string id, double mapPeriod, int shift, Result raw, Result regularised, Result playerGrid,
-                       Dictionary<double, Result> detected)
+                       Dictionary<(double Share, double Smoothing), Result> detected)
             {
                 Id = id;
                 MapPeriod = mapPeriod;
@@ -256,19 +279,20 @@ namespace ParaTactus.Tests
             /// <summary>The grid the player is actually handed.</summary>
             public Result PlayerGrid { get; }
 
-            /// <summary>The trained detector, at each suppression share under test.</summary>
-            public Dictionary<double, Result> Detected { get; }
+            /// <summary>The trained detector, at each suppression share and period smoothing under test.</summary>
+            public Dictionary<(double Share, double Smoothing), Result> Detected { get; }
         }
 
         private readonly struct Result
         {
-            public Result(int count, double rate, double coverage, double precision, double median)
+            public Result(int count, double rate, double coverage, double precision, double median, double steadiness)
             {
                 Count = count;
                 Rate = rate;
                 Coverage = coverage;
                 Precision = precision;
                 Median = median;
+                Steadiness = steadiness;
             }
 
             public int Count { get; }
@@ -276,12 +300,24 @@ namespace ParaTactus.Tests
             public double Coverage { get; }
             public double Precision { get; }
             public double Median { get; }
+
+            /// <summary>
+            /// How much the gap from one beat to the next changes, as the middle change in milliseconds.
+            /// </summary>
+            /// <remarks>
+            /// The number that says whether the pulses are steady, which is a different question from whether they are
+            /// in the right place. A reading can be right about the tempo over a track and still look wrong if the gaps
+            /// alternate, and the eye reads a changing gap as a rhythm of its own. It is the middle of the absolute
+            /// change from one gap to the next rather than the spread of the gaps, because one change of tempo in a
+            /// track would show up in the spread and is not what makes a pulse look unsteady.
+            /// </remarks>
+            public double Steadiness { get; }
         }
 
         private static Result Measure(double[] beats, double[] grid, double seconds)
         {
             if (beats.Length == 0)
-                return new Result(0, 0, 0, 0, 0);
+                return new Result(0, 0, 0, 0, 0, 0);
 
             var distances = new List<double>();
             int precise = 0;
@@ -320,12 +356,20 @@ namespace ParaTactus.Tests
 
             distances.Sort();
 
+            var changes = new List<double>();
+
+            for (int i = 2; i < beats.Length; i++)
+                changes.Add(Math.Abs((beats[i] - beats[i - 1]) - (beats[i - 1] - beats[i - 2])));
+
+            changes.Sort();
+
             return new Result(
                 beats.Length,
                 (beats.Length / seconds) / (grid.Length / seconds),
                 100.0 * covered / grid.Length,
                 100.0 * precise / beats.Length,
-                distances[distances.Count / 2]);
+                distances[distances.Count / 2],
+                changes.Count == 0 ? 0 : changes[changes.Count / 2]);
         }
 
         private static double Median(double[] values)

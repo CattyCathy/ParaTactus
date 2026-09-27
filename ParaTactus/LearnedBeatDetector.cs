@@ -49,13 +49,40 @@ namespace ParaTactus
         /// level: at 0.75 the detector reports 0.87 of the map's beats and covers 67% of them, at 0.6 it reports 1.03
         /// and covers 81%, at 0.5 it reports 1.26 and covers 90%, and at 0.4 it reports 1.50 and covers 93%.
         ///
-        /// Six tenths is the value that puts the reported rate where it belongs across a corpus, and it is not the best
-        /// value for every kind of material. On the fastest beatmaps in the corpus - eight of them at 200 to 290ms -
-        /// five tenths is better on every measure that matters and six tenths is worse: at 0.5 the rate is 0.95 with
-        /// the metrical level right on all eight, against 0.82 and five of eight at 0.6. A caller that knows its
-        /// material is fast should pass its own share; <see cref="Beats(IReadOnlyList{float}, double)"/> takes one.
+        /// Six tenths is the value that puts the reported rate where it belongs across a corpus, and it was measured
+        /// against a sweep that did not yet vary the period smoothing - see <see cref="DefaultPeriodSmoothing"/>, whose
+        /// sweep put the level right on seven of the eight fastest beatmaps at this share, where the unsmoothed run
+        /// managed five. A caller that knows its material is fast can pass its own share to
+        /// <see cref="Beats(IReadOnlyList{float}, double, double)"/>.
         /// </remarks>
         private const double suppression_share = 0.6;
+
+        /// <summary>
+        /// How many seconds either side the predicted period is taken the middle of before it is used.
+        /// </summary>
+        /// <remarks>
+        /// Zero would use the head's output frame by frame, which is what it did first and is what made the pulses
+        /// unsteady. The period sets how far apart two beats have to be, so a period that moves by a quarter of itself
+        /// from one frame to the next moves the spacing by the same, and the head does move that much: one step in seven
+        /// changes by more than a quarter of the tempo.
+        ///
+        /// One second is a measured optimum and not a guess. Swept over the eight fastest beatmaps in the corpus, at a
+        /// suppression share of six tenths:
+        ///
+        /// <code>
+        /// smoothing   rate   on level   coverage   precision   error   change in gap
+        ///   0.0s       0.82     5/8        65%        89%       10ms       40ms
+        ///   1.0s       0.99     7/8        94%        94%        8ms       20ms
+        ///   2.0s       0.98     7/8        94%        94%        8ms       20ms
+        ///   4.0s       0.98     7/8        94%        94%        8ms       20ms
+        /// </code>
+        ///
+        /// All four measures improve at once, which is what makes this the answer rather than a trade: the period is
+        /// supposed to be a tempo, a tempo does not change from one frame to the next, and a better estimate of it both
+        /// steadies the spacing and lets more of the right beats through the suppression. One second is where the
+        /// improvement stops, so it is the value in use.
+        /// </remarks>
+        public const double DefaultPeriodSmoothing = 1.0;
 
         private readonly SessionOptions options;
         private readonly Lazy<InferenceSession> session;
@@ -95,15 +122,26 @@ namespace ParaTactus
         /// </remarks>
         public double[] Beats(IReadOnlyList<float> samples)
         {
-            return Beats(samples, suppression_share);
+            return Beats(samples, suppression_share, DefaultPeriodSmoothing);
         }
 
         /// <summary>
-        /// The same, with the suppression share named by the caller, so it can be swept against a reference.
+        /// The same, with both the suppression share and a smoothing of the predicted period named by the caller.
         /// </summary>
         /// <param name="samples">Mono audio at <see cref="LogMel.SampleRate"/>.</param>
         /// <param name="share">How much of the predicted period two beats have to be apart.</param>
-        public double[] Beats(IReadOnlyList<float> samples, double share)
+        /// <param name="periodSmoothing">
+        /// How many seconds either side to take the middle of the predicted period over, or zero to use it as it comes.
+        ///
+        /// The head reports a period on every frame and that reading moves about: measured over two tracks, the middle
+        /// change between consecutive frames is fifteen to twenty-two beats a minute and one step in seven moves by more
+        /// than a quarter of the tempo. The period is what sets the distance beats have to be apart, so a wobbling period
+        /// is a wobbling spacing between pulses, which is what "the output is unstable" describes. A tempo does not
+        /// really change from one frame to the next, so the middle of a window is a better estimate of it than any single
+        /// frame - and unlike the beat curve, where smoothing would hide where beats are, the period is supposed to be
+        /// smooth.
+        /// </param>
+        public double[] Beats(IReadOnlyList<float> samples, double share, double periodSmoothing)
         {
             if (samples == null)
                 throw new ArgumentNullException(nameof(samples));
@@ -113,6 +151,9 @@ namespace ParaTactus
             if (beats.Length == 0)
                 return Array.Empty<double>();
 
+            if (periodSmoothing > 0)
+                periods = smoothPeriods(periods, periodSmoothing);
+
             int[] chosen = Suppress(beats, periods, share);
 
             var times = new double[chosen.Length];
@@ -121,6 +162,56 @@ namespace ParaTactus
                 times[i] = chosen[i] * 1000.0 / FramesPerSecond;
 
             return times;
+        }
+
+        /// <summary>
+        /// The predicted period with each frame replaced by the middle of its neighbours.
+        /// </summary>
+        /// <remarks>
+        /// A median over a window of seconds, and the window is what makes it work: the wobble being removed is
+        /// frame-to-frame, and a tempo that genuinely changes takes several seconds to do it. Somewhere between is a
+        /// window long enough to average the wobble away and short enough that a real accelerando is still followed,
+        /// which is why the length is a parameter rather than a constant - it is the one thing here that is a judgement
+        /// about the material rather than arithmetic.
+        ///
+        /// A median rather than a mean because the head has outliers: a single frame reading four times the tempo would
+        /// drag a mean over the whole window, where a median is unmoved by it.
+        /// </remarks>
+        private static float[] smoothPeriods(float[] periods, double seconds)
+        {
+            int half = Math.Max(1, (int)Math.Round(seconds * FramesPerSecond));
+
+            if (periods.Length < 3 || half <= 0)
+                return periods;
+
+            var smoothed = new float[periods.Length];
+            var window = new List<float>(2 * half + 1);
+
+            for (int i = 0; i < periods.Length; i++)
+            {
+                int from = Math.Max(0, i - half);
+                int to = Math.Min(periods.Length - 1, i + half);
+
+                window.Clear();
+
+                for (int j = from; j <= to; j++)
+                {
+                    if (periods[j] > 0)
+                        window.Add(periods[j]);
+                }
+
+                if (window.Count == 0)
+                {
+                    smoothed[i] = periods[i];
+                    continue;
+                }
+
+                window.Sort();
+
+                smoothed[i] = window[window.Count / 2];
+            }
+
+            return smoothed;
         }
 
         /// <summary>
