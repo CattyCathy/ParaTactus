@@ -143,7 +143,7 @@ namespace ParaTactus.Tracking
         /// The model runs on the calling thread and blocks it for that cost. That is deliberate - which thread pays for
         /// an analysis is the caller's decision, and the caller is the one that knows whether it has a thread to spare -
         /// but it is the thing to know before wiring this to a UI: adding a second of audio stalls the calling thread
-        /// for about 250ms. <see cref="BeatGridProvider"/> is the wrapper that puts it on a background thread.
+        /// for about 250ms. <see cref="ParaTactus.Grid.BeatGridProvider"/> is the wrapper that puts it on a background thread.
         ///
         /// The audio added is kept for the lifetime of the tracker, because a chunk is analysed with the samples before
         /// it as well as its own. That is about 88KB per second of track.

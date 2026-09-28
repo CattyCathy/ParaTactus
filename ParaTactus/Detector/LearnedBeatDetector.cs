@@ -11,7 +11,7 @@ namespace ParaTactus.Detector
     /// A beat detector trained on this project's own corpus, reading a log-mel spectrogram.
     /// </summary>
     /// <remarks>
-    /// Separate from <see cref="BeatThisBeatTracker"/> because it answers a different question. That model reports
+    /// Separate from <see cref="ParaTactus.Tracking.BeatThisBeatTracker"/> because it answers a different question. That model reports
     /// where a beat is, one frame at a time, and what to do with the frames it is confident about is a decision nothing
     /// in its output makes. This one reports the beat period as well, and the period is what turns a curve of
     /// confidence into a pulse: a frame cannot be a beat if the model says the beats are half a second apart and there
@@ -147,7 +147,7 @@ namespace ParaTactus.Detector
         /// </summary>
         /// <remarks>
         /// Whole-track rather than streaming, because the period head reads its context from a window and a beat near
-        /// the end of what has arrived would move every time more audio did. <see cref="StreamingBeatTracker"/> exists
+        /// the end of what has arrived would move every time more audio did. <see cref="ParaTactus.Tracking.StreamingBeatTracker"/> exists
         /// for the case where beats are needed while a track plays; this is for tracks that can be analysed first.
         /// </remarks>
         public double[] Beats(IReadOnlyList<float> samples)
