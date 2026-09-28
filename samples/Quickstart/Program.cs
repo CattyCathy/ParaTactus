@@ -1,7 +1,8 @@
 ﻿using System;
 using System.IO;
-using ParaTactus;
+using ParaTactus.Audio;
 using ParaTactus.Decoding;
+using ParaTactus.Grid;
 
 // The smallest useful thing this library does: analyse a track and print its beats with the tempo reported at each one.
 //

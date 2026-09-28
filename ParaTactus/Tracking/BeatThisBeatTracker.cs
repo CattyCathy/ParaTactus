@@ -4,9 +4,10 @@ using System.IO;
 using System.Linq;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
-using ParaTactus;
+using ParaTactus.Audio;
+using ParaTactus.Features;
 
-namespace ParaTactus
+namespace ParaTactus.Tracking
 {
     /// <summary>
     /// Beat tracking with the Beat This! model: the frontend and inference the model was trained with, run through

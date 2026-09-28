@@ -4,9 +4,9 @@ using System.Linq;
 using System.Threading;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
-using ParaTactus;
+using ParaTactus.Detector;
 
-namespace ParaTactus
+namespace ParaTactus.Tracking
 {
     /// <summary>
     /// Finds beats in a track as its audio arrives, instead of analysing the whole file at once.

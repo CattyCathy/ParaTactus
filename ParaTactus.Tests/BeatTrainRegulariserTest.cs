@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Tracking;
 
 namespace ParaTactus.Tests
 {

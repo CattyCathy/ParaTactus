@@ -1,6 +1,6 @@
 using System.Threading;
 
-namespace ParaTactus
+namespace ParaTactus.Audio
 {
     /// <summary>
     /// Decoded PCM exactly as the source stores it, without resampling or channel mixing.

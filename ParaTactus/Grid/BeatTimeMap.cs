@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
-using ParaTactus;
 
-namespace ParaTactus
+namespace ParaTactus.Grid
 {
     /// <summary>
     /// A bpm/keyframe map describing how tempo evolves over the course of a track.

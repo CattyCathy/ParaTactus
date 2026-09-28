@@ -4,8 +4,12 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Audio;
 using ParaTactus.Decoding;
+using ParaTactus.Detector;
+using ParaTactus.Features;
+using ParaTactus.Grid;
+using ParaTactus.Tracking;
 
 namespace ParaTactus.Tests
 {

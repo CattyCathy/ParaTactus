@@ -1,6 +1,6 @@
 using System;
 
-namespace ParaTactus
+namespace ParaTactus.Audio
 {
     /// <summary>
     /// Channel mixdown and sample-rate conversion, which every decoder needs and none of them owns.

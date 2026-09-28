@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Audio;
+using ParaTactus.Tracking;
 
 namespace ParaTactus.Tests
 {

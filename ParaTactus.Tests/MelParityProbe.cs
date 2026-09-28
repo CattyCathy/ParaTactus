@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Audio;
 using ParaTactus.Decoding;
+using ParaTactus.Features;
+using ParaTactus.Tracking;
 
 namespace ParaTactus.Tests
 {

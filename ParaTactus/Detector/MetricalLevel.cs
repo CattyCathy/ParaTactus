@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
-using ParaTactus;
 
-namespace ParaTactus
+namespace ParaTactus.Detector
 {
     /// <summary>
     /// Chooses which metrical level of a beat grid counts as the beat.

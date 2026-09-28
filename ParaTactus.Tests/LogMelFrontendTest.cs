@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Tracking;
 
 namespace ParaTactus.Tests
 {

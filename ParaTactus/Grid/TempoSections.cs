@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace ParaTactus
+namespace ParaTactus.Grid
 {
     /// <summary>
     /// A passage of a track at one tempo, as a player would describe it.

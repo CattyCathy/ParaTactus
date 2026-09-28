@@ -4,9 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using ParaTactus;
 
-namespace ParaTactus
+namespace ParaTactus.Grid
 {
     /// <summary>
     /// Stores analysed beat grids on disk so a track is only paid for once.

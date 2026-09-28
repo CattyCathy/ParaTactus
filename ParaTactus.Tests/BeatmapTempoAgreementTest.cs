@@ -4,8 +4,10 @@ using System.IO;
 using System.Linq;
 using ManagedBass;
 using NUnit.Framework;
-using ParaTactus;
 using ParaTactus.Decoding;
+using ParaTactus.Features;
+using ParaTactus.Grid;
+using ParaTactus.Tracking;
 
 namespace ParaTactus.Tests
 {

@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading;
 using ManagedBass;
 using osu.Framework.Audio.Callbacks;
-using ParaTactus;
+using ParaTactus.Audio;
 
 namespace ParaTactus.Decoding
 {

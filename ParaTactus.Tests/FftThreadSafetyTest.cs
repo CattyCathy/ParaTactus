@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Features;
 
 namespace ParaTactus.Tests
 {

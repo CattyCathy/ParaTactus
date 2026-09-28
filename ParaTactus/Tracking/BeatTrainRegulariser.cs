@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
-using ParaTactus;
 
-namespace ParaTactus
+namespace ParaTactus.Tracking
 {
     /// <summary>
     /// Removes the beats the tracker reported on subdivisions and fills in the ones it missed, so the visuals pulse on

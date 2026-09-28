@@ -3,7 +3,6 @@ using System.IO;
 using System.Text;
 using Microsoft.ML.OnnxRuntime;
 using NUnit.Framework;
-using ParaTactus;
 
 namespace ParaTactus.Tests
 {

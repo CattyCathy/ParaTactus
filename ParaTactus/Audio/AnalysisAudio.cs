@@ -1,4 +1,4 @@
-namespace ParaTactus
+namespace ParaTactus.Audio
 {
     /// <summary>
     /// The sample rate everything here works at.

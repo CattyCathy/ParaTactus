@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace ParaTactus
+namespace ParaTactus.Detector
 {
     /// <summary>
     /// Chooses the beats from the model's own activations by searching for the sequence with the steadiest tempo.

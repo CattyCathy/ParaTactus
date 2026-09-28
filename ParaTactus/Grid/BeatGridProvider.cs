@@ -2,9 +2,11 @@ using System;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Threading;
-using ParaTactus;
+using ParaTactus.Audio;
+using ParaTactus.Detector;
+using ParaTactus.Tracking;
 
-namespace ParaTactus
+namespace ParaTactus.Grid
 {
     /// <summary>
     /// The way a player gets a track's beats: from the cache when it has them, otherwise from the model.

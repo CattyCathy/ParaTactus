@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
-using ParaTactus;
+using ParaTactus.Audio;
+using ParaTactus.Tracking;
 
-namespace ParaTactus
+namespace ParaTactus.Features
 {
     /// <summary>
     /// How much onset there is at a set of times, and whether there is any halfway between them.

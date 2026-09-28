@@ -5,8 +5,9 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using NUnit.Framework;
-using ParaTactus;
 using ParaTactus.Decoding;
+using ParaTactus.Detector;
+using ParaTactus.Features;
 
 namespace ParaTactus.Tests
 {

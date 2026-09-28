@@ -6,8 +6,10 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using ParaTactus;
+using ParaTactus.Audio;
 using ParaTactus.Decoding;
+using ParaTactus.Grid;
+using ParaTactus.Tracking;
 
 // Auto-flushed, so a run that hangs still shows how far it got.
 Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });

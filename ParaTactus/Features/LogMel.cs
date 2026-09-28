@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace ParaTactus
+namespace ParaTactus.Features
 {
     /// <summary>
     /// The log-mel spectrogram a beat model reads: log1p(1000 * mel), 128 Slaney bands, magnitude rather than power.

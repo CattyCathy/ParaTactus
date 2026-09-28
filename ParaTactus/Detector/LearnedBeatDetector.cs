@@ -3,8 +3,9 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using ParaTactus.Features;
 
-namespace ParaTactus
+namespace ParaTactus.Detector
 {
     /// <summary>
     /// A beat detector trained on this project's own corpus, reading a log-mel spectrogram.

@@ -1,7 +1,6 @@
 using System;
-using ParaTactus;
 
-namespace ParaTactus
+namespace ParaTactus.Features
 {
     /// <summary>
     /// Minimal in-place radix-2 Cooley-Tukey FFT.

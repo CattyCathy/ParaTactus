@@ -1,6 +1,6 @@
 using System;
 using NUnit.Framework;
-using ParaTactus;
+using ParaTactus.Audio;
 
 namespace ParaTactus.Tests
 {

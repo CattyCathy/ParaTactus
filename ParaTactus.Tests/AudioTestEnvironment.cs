@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using ManagedBass;
 using NUnit.Framework;
-using ParaTactus;
 
 namespace ParaTactus.Tests
 {

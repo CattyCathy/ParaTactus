@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using ParaTactus;
+using ParaTactus.Detector;
 
-namespace ParaTactus
+namespace ParaTactus.Grid
 {
     /// <summary>
     /// A track's beat times, at the metrical level the track calls for, with the tempo and phase a player needs to
